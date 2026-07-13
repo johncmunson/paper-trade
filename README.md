@@ -197,6 +197,39 @@ Market Orders are accepted Monday through Friday from 9:30 AM inclusive to 4:00 
 
 Common rejections are `400 invalid_request` for an invalid side, malformed Ticker, quantity, or missing idempotency key; `404 not_found` for an unknown Investor; `422 unsupported_ticker`; `422 market_closed`; `422 insufficient_cash`; `409 idempotency_conflict`; and `503 market_data_unavailable`. Quote failures change no financial or idempotency state. Insufficient-cash rejection creates no Fill. Replaying the same key and normalized payload returns the original Fill or terminal domain rejection without buying again.
 
+### Sell a Position
+
+Use the same Market Order endpoint with `side: "sell"`. The Ticker, quantity, authentication, market-session, quote, and idempotency rules are identical to a Buy.
+
+```bash
+curl -i -X POST http://localhost:3000/api/investors/investor-123/account/market-orders \
+  -H 'Authorization: Bearer replace-with-a-shared-secret' \
+  -H 'Idempotency-Key: sell-investor-123-aapl-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"side":"sell","ticker":"aapl","quantity":1}'
+```
+
+A successful Sell immediately adds the proceeds to Available Cash, updates cumulative Realized Gain or Loss, updates or removes the Position, and returns its immutable Sell Fill:
+
+```json
+{
+  "type": "sell_fill",
+  "ticker": "AAPL",
+  "quantity": 1,
+  "priceCents": 25000,
+  "totalCents": 25000,
+  "costBasisCents": 21134,
+  "realizedGainLossCents": 3866,
+  "quoteTimestamp": "2026-07-13T15:30:00.000Z"
+}
+```
+
+For a partial sale, `costBasisCents` is the Position's proportional total cost basis rounded to the nearest cent. A complete sale removes the exact remaining basis and the zero-quantity Position. The Fill's `totalCents` is sale proceeds, and `realizedGainLossCents` is proceeds minus removed basis. Account reads return the updated cumulative result without market data.
+
+Selling an unknown Position or more shares than held returns `422 insufficient_shares` and changes no financial state or Account Activity. Quote failures remain retryable; domain rejections and successful Fills replay from their terminal idempotency response. Concurrent Sells are serialized so they cannot oversell.
+
+Sale proceeds have no settlement delay and may fund the next Buy or Cash Withdrawal immediately. The supported workflow is account creation → Cash Deposit → Buy → additional Buy → partial Sell → complete Sell → Cash Withdrawal. Paper Trade does not add tax lots, short selling, fees, spread, slippage, settlement state, or persistent Orders.
+
 ## Tradable Security endpoints
 
 Financial Datasets must be configured with a server-side API key and a subscription that includes real-time company price snapshots. Market data is fetched on demand; Paper Trade does not persist, prefetch, or cache security facts, quotes, or price history.

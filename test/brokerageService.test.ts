@@ -58,9 +58,11 @@ function memoryStore() {
             ).toISOString(),
           })
         },
+        updateRealizedGainLoss: async () => {},
         findPosition: async () => undefined,
         upsertPosition: async () => {},
-        insertBuyActivity: async () => {},
+        deletePosition: async () => {},
+        insertFillActivity: async () => {},
         insertIdempotency: async (record) => {
           idempotency.set(
             `${record.investorId}:${record.key}`,

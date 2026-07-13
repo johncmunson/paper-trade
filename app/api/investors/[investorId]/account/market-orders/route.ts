@@ -23,7 +23,7 @@ const invalidRequest: ApplicationResult = {
     error: {
       code: "invalid_request",
       message:
-        'side must be "buy", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.',
+        'side must be "buy" or "sell", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.',
     },
   },
 }

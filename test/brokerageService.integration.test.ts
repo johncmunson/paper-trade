@@ -291,12 +291,17 @@ describe("Brokerage Account persistence", () => {
     })
   })
 
-  test("buys repeatedly into one Position and replays the original Fill", async () => {
+  test("persists the complete deposit, repeated Buy, partial Sell, complete Sell, and withdrawal lifecycle", async () => {
     const investorId = "buy-lifecycle-investor"
     await createBrokerageAccount(postgresBrokerageStore, {
       investorId,
       startingCashCents: 100_000,
       idempotencyKey: "open-buy-lifecycle",
+    })
+    await depositCash(postgresBrokerageStore, {
+      investorId,
+      amountCents: 10_000,
+      idempotencyKey: "deposit-buy-lifecycle",
     })
     const fetchFirstQuote = async (): Promise<FinancialDatasetsResult> => ({
       status: "ok",
@@ -360,34 +365,108 @@ describe("Brokerage Account persistence", () => {
     ).toMatchObject({ status: 200, body: { totalCents: 20_000 } })
 
     expect(
+      await submitMarketOrder(
+        postgresBrokerageStore,
+        async (): Promise<FinancialDatasetsResult> => ({
+          status: "ok",
+          data: {
+            ticker: "AAPL",
+            price: 300,
+            quoteTimestamp: "2026-07-13T14:31:45.000Z",
+          },
+        }),
+        {
+          ...firstCommand,
+          side: "sell",
+          quantity: 1,
+          idempotencyKey: "sell-partial",
+        },
+        { marketAlwaysOpen: true },
+      ),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        type: "sell_fill",
+        totalCents: 30_000,
+        costBasisCents: 13_334,
+        realizedGainLossCents: 16_666,
+      },
+    })
+    expect(
+      await submitMarketOrder(
+        postgresBrokerageStore,
+        async (): Promise<FinancialDatasetsResult> => ({
+          status: "ok",
+          data: {
+            ticker: "AAPL",
+            price: 100,
+            quoteTimestamp: "2026-07-13T14:32:45.000Z",
+          },
+        }),
+        {
+          ...firstCommand,
+          side: "sell",
+          quantity: 2,
+          idempotencyKey: "sell-complete",
+        },
+        { marketAlwaysOpen: true },
+      ),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        type: "sell_fill",
+        totalCents: 20_000,
+        costBasisCents: 26_668,
+        realizedGainLossCents: -6_668,
+      },
+    })
+    await withdrawCash(postgresBrokerageStore, {
+      investorId,
+      amountCents: 19_998,
+      idempotencyKey: "withdraw-sale-proceeds",
+    })
+
+    expect(
       await readBrokerageAccount(postgresBrokerageStore, investorId),
     ).toEqual({
       status: 200,
       body: {
         investorId,
-        availableCashCents: 59_998,
-        realizedGainLossCents: 0,
-        positions: [
-          { ticker: "AAPL", quantity: 3, averageCostBasisCents: 13_334 },
-        ],
+        availableCashCents: 100_000,
+        realizedGainLossCents: 9_998,
+        positions: [],
       },
     })
-    expect(await db.select().from(positions)).toMatchObject([
-      { ticker: "AAPL", quantity: 3, totalCostBasisCents: 40_002 },
-    ])
+    expect(await db.select().from(positions)).toHaveLength(0)
     expect(
       await listAccountActivities(postgresBrokerageStore, investorId),
     ).toMatchObject({
       status: 200,
       body: {
         activities: [
+          { type: "cash_withdrawal", amountCents: 19_998 },
+          {
+            type: "sell_fill",
+            quantity: 2,
+            totalCents: 20_000,
+            costBasisCents: 26_668,
+            realizedGainLossCents: -6_668,
+          },
+          {
+            type: "sell_fill",
+            quantity: 1,
+            totalCents: 30_000,
+            costBasisCents: 13_334,
+            realizedGainLossCents: 16_666,
+          },
           { type: "buy_fill", quantity: 1, totalCents: 20_000 },
           { type: "buy_fill", quantity: 2, totalCents: 20_002 },
+          { type: "cash_deposit", amountCents: 10_000 },
           { type: "starting_cash", amountCents: 100_000 },
         ],
       },
     })
-    expect(await db.select().from(idempotencyKeys)).toHaveLength(3)
+    expect(await db.select().from(idempotencyKeys)).toHaveLength(7)
   })
 
   test("rolls back every Buy write when its transaction fails", async () => {
@@ -486,6 +565,85 @@ describe("Brokerage Account persistence", () => {
     expect(
       (await db.select().from(accountActivities)).filter(
         (activity) => activity.type === "buy_fill",
+      ),
+    ).toHaveLength(1)
+  })
+
+  test("serializes concurrent Sells and keeps current state aligned with immutable Account Activity", async () => {
+    const investorId = "concurrent-sell-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 100_00,
+      idempotencyKey: "open-concurrent-sell",
+    })
+    const quote = (price: number): Promise<FinancialDatasetsResult> =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          ticker: "AAPL",
+          price,
+          quoteTimestamp: "2026-07-13T14:29:45.000Z",
+        },
+      })
+    await submitMarketOrder(
+      postgresBrokerageStore,
+      () => quote(70),
+      {
+        investorId,
+        side: "buy",
+        ticker: "AAPL",
+        quantity: 1,
+        idempotencyKey: "buy-before-concurrent-sell",
+      },
+      { marketAlwaysOpen: true },
+    )
+    const sell = (idempotencyKey: string) =>
+      submitMarketOrder(
+        postgresBrokerageStore,
+        () => quote(80),
+        {
+          investorId,
+          side: "sell",
+          ticker: "AAPL",
+          quantity: 1,
+          idempotencyKey,
+        },
+        { marketAlwaysOpen: true },
+      )
+
+    const results = await Promise.all([sell("sell-1"), sell("sell-2")])
+    expect(results.map((result) => result.status).sort()).toEqual([200, 422])
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toEqual({
+      status: 200,
+      body: {
+        investorId,
+        availableCashCents: 110_00,
+        realizedGainLossCents: 10_00,
+        positions: [],
+      },
+    })
+    expect(
+      await listAccountActivities(postgresBrokerageStore, investorId),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        activities: [
+          {
+            type: "sell_fill",
+            totalCents: 80_00,
+            costBasisCents: 70_00,
+            realizedGainLossCents: 10_00,
+          },
+          { type: "buy_fill", totalCents: 70_00 },
+          { type: "starting_cash", amountCents: 100_00 },
+        ],
+      },
+    })
+    expect(
+      (await db.select().from(accountActivities)).filter(
+        (activity) => activity.type === "sell_fill",
       ),
     ).toHaveLength(1)
   })

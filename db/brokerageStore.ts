@@ -110,6 +110,15 @@ export const postgresBrokerageStore: BrokerageStore = {
             amountCents,
           })
         },
+        updateRealizedGainLoss: async (
+          investorId,
+          realizedGainLossCents,
+        ) => {
+          await transaction
+            .update(accounts)
+            .set({ realizedGainLossCents })
+            .where(eq(accounts.investorId, investorId))
+        },
         findPosition: async (investorId, ticker) => {
           const [position] = await transaction
             .select({
@@ -140,7 +149,17 @@ export const postgresBrokerageStore: BrokerageStore = {
               set: { quantity, totalCostBasisCents },
             })
         },
-        insertBuyActivity: async (investorId, fill) => {
+        deletePosition: async (investorId, ticker) => {
+          await transaction
+            .delete(positions)
+            .where(
+              and(
+                eq(positions.investorId, investorId),
+                eq(positions.ticker, ticker),
+              ),
+            )
+        },
+        insertFillActivity: async (investorId, fill) => {
           await transaction.insert(accountActivities).values({
             investorId,
             type: fill.type,
@@ -148,6 +167,12 @@ export const postgresBrokerageStore: BrokerageStore = {
             quantity: fill.quantity,
             priceCents: fill.priceCents,
             totalCents: fill.totalCents,
+            costBasisCents:
+              fill.type === "sell_fill" ? fill.costBasisCents : undefined,
+            realizedGainLossCents:
+              fill.type === "sell_fill"
+                ? fill.realizedGainLossCents
+                : undefined,
             quoteTimestamp: new Date(fill.quoteTimestamp),
           })
         },

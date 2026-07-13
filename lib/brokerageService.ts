@@ -71,6 +71,19 @@ export type BuyFill = {
   quoteTimestamp: string
 }
 
+export type SellFill = {
+  type: "sell_fill"
+  ticker: string
+  quantity: number
+  priceCents: number
+  totalCents: number
+  costBasisCents: number
+  realizedGainLossCents: number
+  quoteTimestamp: string
+}
+
+type Fill = BuyFill | SellFill
+
 export type DailyHistoricalPrices = {
   ticker: string
   prices: Array<{
@@ -94,7 +107,7 @@ export type ApplicationResult = {
     | AccountActivityList
     | TradableSecurity
     | SecurityQuote
-    | BuyFill
+    | Fill
     | DailyHistoricalPrices
     | ErrorBody
 }
@@ -126,6 +139,10 @@ type BrokerageTransaction = {
     type: "cash_deposit" | "cash_withdrawal",
     amountCents: number,
   ): Promise<void>
+  updateRealizedGainLoss(
+    investorId: string,
+    realizedGainLossCents: number,
+  ): Promise<void>
   findPosition(
     investorId: string,
     ticker: string,
@@ -136,7 +153,8 @@ type BrokerageTransaction = {
     quantity: number,
     totalCostBasisCents: number,
   ): Promise<void>
-  insertBuyActivity(investorId: string, fill: BuyFill): Promise<void>
+  deletePosition(investorId: string, ticker: string): Promise<void>
+  insertFillActivity(investorId: string, fill: Fill): Promise<void>
   insertIdempotency(record: IdempotencyRecord): Promise<void>
 }
 
@@ -235,7 +253,7 @@ const invalidMarketOrder: ApplicationResult = {
     error: {
       code: "invalid_request",
       message:
-        'side must be "buy", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.',
+        'side must be "buy" or "sell", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.',
     },
   },
 }
@@ -267,6 +285,26 @@ const positionLimitExceeded: ApplicationResult = {
     error: {
       code: "position_limit_exceeded",
       message: "Buy Market Order would exceed the supported Position limit.",
+    },
+  },
+}
+
+const insufficientShares: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "insufficient_shares",
+      message: "Sell Market Order exceeds the Position quantity.",
+    },
+  },
+}
+
+const accountLimitExceeded: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "account_limit_exceeded",
+      message: "Sell Market Order would exceed the supported account limit.",
     },
   },
 }
@@ -445,7 +483,7 @@ export async function quoteTradableSecurity(
 
 export function isValidMarketOrder(command: MarketOrderCommand) {
   return (
-    command.side === "buy" &&
+    (command.side === "buy" || command.side === "sell") &&
     typeof command.ticker === "string" &&
     Boolean(normalizeTicker(command.ticker)) &&
     Number.isSafeInteger(command.quantity) &&
@@ -465,7 +503,8 @@ export async function submitMarketOrder(
 
   const ticker = normalizeTicker(command.ticker as string) as string
   const quantity = command.quantity as number
-  const fingerprint = JSON.stringify({ operation: "buy", ticker, quantity })
+  const side = command.side as "buy" | "sell"
+  const fingerprint = JSON.stringify({ operation: side, ticker, quantity })
   const lockAndFindIdempotencyResult = async (
     transaction: BrokerageTransaction,
   ) => {
@@ -538,41 +577,100 @@ export async function submitMarketOrder(
 
     const account = await transaction.lockAccount(command.investorId)
     if (!account) return recordResult(accountNotFound)
-    if (quantity > Math.floor(account.availableCashCents / quote.priceCents)) {
-      return recordResult(buyInsufficientCash)
-    }
 
     const current = await transaction.findPosition(command.investorId, ticker)
     const totalCents = quote.priceCents * quantity
-    const newQuantity = (current?.quantity ?? 0) + quantity
-    const totalCostBasisCents = (current?.totalCostBasisCents ?? 0) + totalCents
-    if (
-      !Number.isSafeInteger(newQuantity) ||
-      !Number.isSafeInteger(totalCostBasisCents)
-    ) {
-      return recordResult(positionLimitExceeded)
+
+    if (side === "buy") {
+      if (quantity > Math.floor(account.availableCashCents / quote.priceCents)) {
+        return recordResult(buyInsufficientCash)
+      }
+
+      const newQuantity = (current?.quantity ?? 0) + quantity
+      const totalCostBasisCents =
+        (current?.totalCostBasisCents ?? 0) + totalCents
+      if (
+        !Number.isSafeInteger(newQuantity) ||
+        !Number.isSafeInteger(totalCostBasisCents)
+      ) {
+        return recordResult(positionLimitExceeded)
+      }
+
+      const fill: BuyFill = {
+        type: "buy_fill",
+        ticker,
+        quantity,
+        priceCents: quote.priceCents,
+        totalCents,
+        quoteTimestamp: quote.quoteTimestamp,
+      }
+      await transaction.updateAvailableCash(
+        command.investorId,
+        account.availableCashCents - totalCents,
+      )
+      await transaction.upsertPosition(
+        command.investorId,
+        ticker,
+        newQuantity,
+        totalCostBasisCents,
+      )
+      await transaction.insertFillActivity(command.investorId, fill)
+      return recordResult({ status: 200, body: fill })
     }
 
-    const fill: BuyFill = {
-      type: "buy_fill",
+    if (!current || quantity > current.quantity) {
+      return recordResult(insufficientShares)
+    }
+
+    const costBasisCents =
+      quantity === current.quantity
+        ? current.totalCostBasisCents
+        : Number(
+            (BigInt(current.totalCostBasisCents) * BigInt(quantity) +
+              BigInt(current.quantity) / BigInt(2)) /
+              BigInt(current.quantity),
+          )
+    const availableCashCents = account.availableCashCents + totalCents
+    const realizedGainLossCents = totalCents - costBasisCents
+    const cumulativeRealizedGainLossCents =
+      account.realizedGainLossCents + realizedGainLossCents
+    if (
+      !Number.isSafeInteger(totalCents) ||
+      !Number.isSafeInteger(availableCashCents) ||
+      !Number.isSafeInteger(cumulativeRealizedGainLossCents)
+    ) {
+      return recordResult(accountLimitExceeded)
+    }
+
+    const fill: SellFill = {
+      type: "sell_fill",
       ticker,
       quantity,
       priceCents: quote.priceCents,
       totalCents,
+      costBasisCents,
+      realizedGainLossCents,
       quoteTimestamp: quote.quoteTimestamp,
     }
     await transaction.updateAvailableCash(
       command.investorId,
-      account.availableCashCents - totalCents,
+      availableCashCents,
     )
-    await transaction.upsertPosition(
+    await transaction.updateRealizedGainLoss(
       command.investorId,
-      ticker,
-      newQuantity,
-      totalCostBasisCents,
+      cumulativeRealizedGainLossCents,
     )
-    await transaction.insertBuyActivity(command.investorId, fill)
-
+    if (quantity === current.quantity) {
+      await transaction.deletePosition(command.investorId, ticker)
+    } else {
+      await transaction.upsertPosition(
+        command.investorId,
+        ticker,
+        current.quantity - quantity,
+        current.totalCostBasisCents - costBasisCents,
+      )
+    }
+    await transaction.insertFillActivity(command.investorId, fill)
     return recordResult({ status: 200, body: fill })
   })
 }
