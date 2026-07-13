@@ -1,0 +1,1612 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Paper Trade API
+  version: 1.0.0
+  summary: Private API for simulated brokerage accounts and market data.
+  description: |
+    Paper Trade maintains one simulated Brokerage Account per Wealth Manager
+    Investor and exposes on-demand Tradable Security data.
+
+    ## Authentication
+    All business operations require the opaque shared service credential in an
+    `Authorization: Bearer <credential>` header. The credential is not a JWT.
+    `OPTIONS` and unsupported-method responses do not authenticate.
+
+    ## Money and quantities
+    Monetary fields ending in `Cents` are integer cents. Share quantities are
+    positive whole shares. Request values are restricted to JavaScript safe
+    integers where stated.
+
+    ## Idempotency
+    Every account mutation requires `Idempotency-Key`. Keys are scoped to the
+    exact Investor and retained with terminal results. Repeating the same key
+    and normalized request replays the original status and body; reusing it for
+    a different request returns `409 idempotency_conflict`.
+
+    ## Method handling
+    Documented `HEAD` operations are provided by Next.js by invoking `GET` and
+    suppressing the body. Unsupported exported methods return `405` with
+    `{"error":{"code":"method_not_allowed","message":"Method not allowed."}}`
+    and the same `Allow` value shown by the path's `OPTIONS` operation. These
+    rejecting methods are intentionally omitted as OpenAPI operations.
+
+    `OPTIONS` responses expose `Allow` only; they are not complete CORS
+    preflight responses and emit no `Access-Control-Allow-*` headers.
+servers:
+  - url: "{scheme}://{host}"
+    description: Paper Trade service
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost:3000
+        description: Deployment host, optionally including a port.
+tags:
+  - name: Brokerage Accounts
+    description: Brokerage Account lifecycle, balances, Positions, and Account Activity.
+  - name: Market Orders
+    description: Synchronous simulated Buy and Sell fills.
+  - name: Tradable Securities
+    description: On-demand security facts, quotes, and daily price history.
+security:
+  - bearerAuth: []
+paths:
+  /api/investors/{investorId}/account:
+    description: |
+      `DELETE`, `PATCH`, and `PUT` return the structured `405` response described
+      in the API overview with `Allow: GET, HEAD, OPTIONS, POST`.
+    parameters:
+      - $ref: "#/components/parameters/InvestorId"
+    get:
+      operationId: getBrokerageAccount
+      summary: Get a Brokerage Account
+      description: |
+        Returns durable cash, cumulative Realized Gain or Loss, and Positions.
+        No market data is requested. Positions are ordered by Ticker ascending.
+      tags: [Brokerage Accounts]
+      responses:
+        "200":
+          description: Brokerage Account found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerageAccount"
+              examples:
+                account:
+                  value:
+                    investorId: investor-123
+                    availableCashCents: 1000000
+                    realizedGainLossCents: 0
+                    positions: []
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    head:
+      operationId: headBrokerageAccount
+      summary: Check for a Brokerage Account
+      description: Runs the GET operation, including authentication and database reads, but returns no body.
+      tags: [Brokerage Accounts]
+      responses:
+        "200":
+          description: Brokerage Account found; body omitted.
+        "401":
+          description: Bearer credential is missing or invalid; body omitted.
+        "404":
+          description: Brokerage Account not found; body omitted.
+        "500":
+          description: The request could not be completed; body omitted.
+    post:
+      operationId: createBrokerageAccount
+      summary: Create a Brokerage Account
+      description: |
+        Creates the account and its `starting_cash` Account Activity atomically.
+        One account is allowed per exact Investor ID. An exact idempotent replay
+        returns the original `201` body and does not create another activity.
+      tags: [Brokerage Accounts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBrokerageAccountRequest"
+            examples:
+              standard:
+                value:
+                  startingCashCents: 1000000
+              zeroBalance:
+                value:
+                  startingCashCents: 0
+      responses:
+        "201":
+          description: Account created, or the original successful result replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerageAccount"
+              examples:
+                created:
+                  value:
+                    investorId: investor-123
+                    availableCashCents: 1000000
+                    realizedGainLossCents: 0
+                    positions: []
+        "400":
+          $ref: "#/components/responses/InvalidAccountCreation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/AccountCreationConflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    options:
+      operationId: optionsBrokerageAccount
+      summary: List supported account methods
+      tags: [Brokerage Accounts]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/AccountOptions"
+
+  /api/investors/{investorId}/account/deposits:
+    description: |
+      `GET`, `HEAD`, `DELETE`, `PATCH`, and `PUT` return `405`. The explicit
+      handlers return the structured error; the framework-generated HEAD body
+      is suppressed. `Allow` is `OPTIONS, POST`.
+    parameters:
+      - $ref: "#/components/parameters/InvestorId"
+    post:
+      operationId: depositCash
+      summary: Deposit cash
+      description: |
+        Adds cash and records one `cash_deposit` Account Activity atomically.
+        A successful exact replay returns the original account snapshot without
+        moving cash again. A terminal `404` or `422` is also retained for replay.
+      tags: [Brokerage Accounts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CashMovement"
+      responses:
+        "200":
+          description: Deposit committed, or the original successful result replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerageAccount"
+              examples:
+                deposited:
+                  value:
+                    investorId: investor-123
+                    availableCashCents: 1025000
+                    realizedGainLossCents: 0
+                    positions: []
+        "400":
+          $ref: "#/components/responses/InvalidCashMovement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "422":
+          $ref: "#/components/responses/DepositLimitExceeded"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    options:
+      operationId: optionsCashDeposits
+      summary: List supported deposit methods
+      tags: [Brokerage Accounts]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/MutationOptions"
+
+  /api/investors/{investorId}/account/withdrawals:
+    description: |
+      `GET`, `HEAD`, `DELETE`, `PATCH`, and `PUT` return `405`. The explicit
+      handlers return the structured error; the framework-generated HEAD body
+      is suppressed. `Allow` is `OPTIONS, POST`.
+    parameters:
+      - $ref: "#/components/parameters/InvestorId"
+    post:
+      operationId: withdrawCash
+      summary: Withdraw cash
+      description: |
+        Subtracts cash and records one `cash_withdrawal` Account Activity
+        atomically. Withdrawing the entire Available Cash balance is allowed.
+        Concurrent withdrawals are serialized and cannot overdraw the account.
+      tags: [Brokerage Accounts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CashMovement"
+      responses:
+        "200":
+          description: Withdrawal committed, or the original successful result replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrokerageAccount"
+              examples:
+                withdrawn:
+                  value:
+                    investorId: investor-123
+                    availableCashCents: 970000
+                    realizedGainLossCents: 0
+                    positions: []
+        "400":
+          $ref: "#/components/responses/InvalidCashMovement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "422":
+          $ref: "#/components/responses/WithdrawalInsufficientCash"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    options:
+      operationId: optionsCashWithdrawals
+      summary: List supported withdrawal methods
+      tags: [Brokerage Accounts]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/MutationOptions"
+
+  /api/investors/{investorId}/account/activities:
+    description: |
+      `DELETE`, `PATCH`, `POST`, and `PUT` return the structured `405` response
+      with `Allow: GET, HEAD, OPTIONS`.
+    parameters:
+      - $ref: "#/components/parameters/InvestorId"
+    get:
+      operationId: listAccountActivities
+      summary: List Account Activity
+      description: |
+        Returns at most 100 activities, newest first. Equal timestamps are
+        ordered by the internal activity identifier descending. There is no
+        pagination, filtering, or caller-selectable limit.
+      tags: [Brokerage Accounts]
+      responses:
+        "200":
+          description: Account exists; its activity history is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountActivityList"
+              examples:
+                cashMovements:
+                  value:
+                    activities:
+                      - type: cash_withdrawal
+                        amountCents: 30000
+                        createdAt: "2026-07-13T12:02:00.000Z"
+                      - type: cash_deposit
+                        amountCents: 25000
+                        createdAt: "2026-07-13T12:01:00.000Z"
+                      - type: starting_cash
+                        amountCents: 1000000
+                        createdAt: "2026-07-13T12:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    head:
+      operationId: headAccountActivities
+      summary: Check Account Activity availability
+      description: Runs the GET operation, including database reads, but returns no body.
+      tags: [Brokerage Accounts]
+      responses:
+        "200":
+          description: Account exists; body omitted.
+        "401":
+          description: Bearer credential is missing or invalid; body omitted.
+        "404":
+          description: Brokerage Account not found; body omitted.
+        "500":
+          description: The request could not be completed; body omitted.
+    options:
+      operationId: optionsAccountActivities
+      summary: List supported activity methods
+      tags: [Brokerage Accounts]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/ReadOptions"
+
+  /api/investors/{investorId}/account/market-orders:
+    description: |
+      `GET`, `HEAD`, `DELETE`, `PATCH`, and `PUT` return `405`. The explicit
+      handlers return the structured error; the framework-generated HEAD body
+      is suppressed. `Allow` is `OPTIONS, POST`.
+    parameters:
+      - $ref: "#/components/parameters/InvestorId"
+    post:
+      operationId: placeMarketOrder
+      summary: Execute a Buy or Sell Market Order
+      description: |
+        Executes synchronously against a freshly fetched quote and returns an
+        immutable Fill; no Market Order resource is persisted. Tickers are
+        trimmed and uppercased before validation.
+
+        The simplified session is Monday through Friday, 09:30 inclusive to
+        16:00 exclusive in `America/New_York`; holidays and early closes are
+        intentionally ignored. Development may bypass only the session check.
+
+        Facts and quote data are fetched before account lookup. Consequently an
+        unknown Investor can receive market-session, security, or provider
+        errors before `404`. Matching idempotent replays occur before those
+        checks and return the originally stored body.
+      tags: [Market Orders]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketOrderRequest"
+            examples:
+              buy:
+                value:
+                  side: buy
+                  ticker: " aapl "
+                  quantity: 2
+              sell:
+                value:
+                  side: sell
+                  ticker: aapl
+                  quantity: 1
+      responses:
+        "200":
+          description: The order filled, or the original Fill was replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketOrderFill"
+              examples:
+                buy:
+                  value:
+                    type: buy_fill
+                    ticker: AAPL
+                    quantity: 2
+                    priceCents: 21134
+                    totalCents: 42268
+                    quoteTimestamp: "2026-07-13T14:30:00.000Z"
+                sell:
+                  value:
+                    type: sell_fill
+                    ticker: AAPL
+                    quantity: 1
+                    priceCents: 25000
+                    totalCents: 25000
+                    costBasisCents: 21134
+                    realizedGainLossCents: 3866
+                    quoteTimestamp: "2026-07-13T15:30:00.000Z"
+        "400":
+          $ref: "#/components/responses/InvalidMarketOrder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "422":
+          $ref: "#/components/responses/MarketOrderRejected"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/MarketDataUnavailable"
+    options:
+      operationId: optionsMarketOrders
+      summary: List supported Market Order methods
+      tags: [Market Orders]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/MutationOptions"
+
+  /api/securities/{ticker}:
+    description: |
+      `DELETE`, `PATCH`, `POST`, and `PUT` return the structured `405` response
+      with `Allow: GET, HEAD, OPTIONS`.
+    parameters:
+      - $ref: "#/components/parameters/Ticker"
+    get:
+      operationId: getTradableSecurity
+      summary: Look up a Tradable Security
+      description: |
+        Performs an exact lookup after trimming and uppercasing the Ticker.
+        There is no fuzzy search or alias matching. The provider request is not
+        cached. Returned name and exchange are trimmed; exchange casing is
+        provider-controlled.
+      tags: [Tradable Securities]
+      responses:
+        "200":
+          description: An active security on an accepted US exchange was found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradableSecurity"
+              examples:
+                apple:
+                  value:
+                    ticker: AAPL
+                    name: Apple Inc.
+                    exchange: NASDAQ
+        "400":
+          $ref: "#/components/responses/InvalidTicker"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnsupportedTicker"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/MarketDataUnavailable"
+    head:
+      operationId: headTradableSecurity
+      summary: Check Tradable Security availability
+      description: Runs the GET operation, including its provider request, but returns no body.
+      tags: [Tradable Securities]
+      responses:
+        "200":
+          description: Tradable Security found; body omitted.
+        "400":
+          description: Ticker is malformed; body omitted.
+        "401":
+          description: Bearer credential is missing or invalid; body omitted.
+        "422":
+          description: Ticker is unsupported; body omitted.
+        "500":
+          description: The request could not be completed; body omitted.
+        "503":
+          description: Market data is unavailable; body omitted.
+    options:
+      operationId: optionsTradableSecurity
+      summary: List supported security lookup methods
+      tags: [Tradable Securities]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/ReadOptions"
+
+  /api/securities/{ticker}/quote:
+    description: |
+      `DELETE`, `PATCH`, `POST`, and `PUT` return the structured `405` response
+      with `Allow: GET, HEAD, OPTIONS`.
+    parameters:
+      - $ref: "#/components/parameters/Ticker"
+    get:
+      operationId: getSecurityQuote
+      summary: Get a current quote
+      description: |
+        Fetches a non-cached provider snapshot. Price is rounded to the nearest
+        cent. This endpoint does not fetch company facts, so it does not itself
+        verify active status, exchange, or asset class.
+      tags: [Tradable Securities]
+      responses:
+        "200":
+          description: A usable quote was returned by the provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityQuote"
+              examples:
+                apple:
+                  value:
+                    ticker: AAPL
+                    priceCents: 21134
+                    quoteTimestamp: "2026-07-13T14:30:00.000Z"
+        "400":
+          $ref: "#/components/responses/InvalidTicker"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnsupportedTicker"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/MarketDataUnavailable"
+    head:
+      operationId: headSecurityQuote
+      summary: Check quote availability
+      description: Runs the GET operation, including its provider request, but returns no body.
+      tags: [Tradable Securities]
+      responses:
+        "200":
+          description: Quote available; body omitted.
+        "400":
+          description: Ticker is malformed; body omitted.
+        "401":
+          description: Bearer credential is missing or invalid; body omitted.
+        "422":
+          description: Ticker is unsupported; body omitted.
+        "500":
+          description: The request could not be completed; body omitted.
+        "503":
+          description: Market data is unavailable; body omitted.
+    options:
+      operationId: optionsSecurityQuote
+      summary: List supported quote methods
+      tags: [Tradable Securities]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/ReadOptions"
+
+  /api/securities/{ticker}/prices:
+    description: |
+      `DELETE`, `PATCH`, `POST`, and `PUT` return the structured `405` response
+      with `Allow: GET, HEAD, OPTIONS`.
+    parameters:
+      - $ref: "#/components/parameters/Ticker"
+    get:
+      operationId: getDailyHistoricalPrices
+      summary: Get daily historical prices
+      description: |
+        Returns provider daily OHLCV rows in the requested inclusive date range.
+        `startDate` must be no later than `endDate`. Rows are not sorted,
+        deduplicated, synthesized, or filled; provider order is preserved and an
+        empty array is valid. One malformed or out-of-range provider row rejects
+        the entire response as `503`.
+      tags: [Tradable Securities]
+      parameters:
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Historical rows returned; the list may be empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyHistoricalPrices"
+              examples:
+                apple:
+                  value:
+                    ticker: AAPL
+                    prices:
+                      - date: "2026-01-02"
+                        openCents: 24385
+                        highCents: 24415
+                        lowCents: 24191
+                        closeCents: 24336
+                        volume: 40230800
+        "400":
+          $ref: "#/components/responses/InvalidHistoricalPricesRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnsupportedTicker"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/MarketDataUnavailable"
+    head:
+      operationId: headDailyHistoricalPrices
+      summary: Check historical-price availability
+      description: Runs the GET operation, including provider requests, but returns no body.
+      tags: [Tradable Securities]
+      parameters:
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
+      responses:
+        "200":
+          description: Historical-price request succeeded; body omitted.
+        "400":
+          description: Ticker or date range is invalid; body omitted.
+        "401":
+          description: Bearer credential is missing or invalid; body omitted.
+        "422":
+          description: Ticker is unsupported; body omitted.
+        "500":
+          description: The request could not be completed; body omitted.
+        "503":
+          description: Market data is unavailable; body omitted.
+    options:
+      operationId: optionsDailyHistoricalPrices
+      summary: List supported historical-price methods
+      tags: [Tradable Securities]
+      security: []
+      responses:
+        "204":
+          $ref: "#/components/responses/ReadOptions"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque shared service credential configured as `PAPER_TRADE_SERVICE_CREDENTIAL`.
+
+  parameters:
+    InvestorId:
+      name: investorId
+      in: path
+      required: true
+      description: |
+        Exact, opaque Investor identifier. The application does not trim,
+        normalize, length-limit, or pattern-check this value.
+      schema:
+        type: string
+      example: investor-123
+    Ticker:
+      name: ticker
+      in: path
+      required: true
+      description: |
+        Ticker input. The application trims and uppercases the decoded value,
+        then requires 1–10 ASCII characters matching
+        `^[A-Z][A-Z0-9.-]{0,9}$`. The schema intentionally does not apply this
+        pattern to the raw input because lowercase and surrounding whitespace
+        are accepted.
+      schema:
+        type: string
+      examples:
+        canonical:
+          value: AAPL
+        normalizedByServer:
+          value: " aapl "
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Investor-scoped mutation key containing at least one non-whitespace
+        character. Whitespace is checked only for emptiness; the original value
+        is retained as the key. No maximum length is enforced.
+      schema:
+        type: string
+        minLength: 1
+        pattern: '\S'
+      example: deposit-investor-123-1
+    StartDate:
+      name: startDate
+      in: query
+      required: true
+      description: Inclusive first calendar date. Must be no later than `endDate`.
+      schema:
+        type: string
+        format: date
+      example: "2026-01-02"
+    EndDate:
+      name: endDate
+      in: query
+      required: true
+      description: Inclusive last calendar date. Must be no earlier than `startDate`.
+      schema:
+        type: string
+        format: date
+      example: "2026-01-05"
+
+  headers:
+    AllowAccount:
+      description: Methods supported by the account resource.
+      schema:
+        type: string
+        const: GET, HEAD, OPTIONS, POST
+    AllowRead:
+      description: Methods supported by the read-only resource.
+      schema:
+        type: string
+        const: GET, HEAD, OPTIONS
+    AllowMutation:
+      description: Methods supported by the mutation resource.
+      schema:
+        type: string
+        const: OPTIONS, POST
+
+  requestBodies:
+    CashMovement:
+      required: true
+      description: Cash amount to deposit or withdraw.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CashMovementRequest"
+          examples:
+            standard:
+              value:
+                amountCents: 25000
+
+  responses:
+    AccountOptions:
+      description: Supported methods returned; no response body.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowAccount"
+    ReadOptions:
+      description: Supported methods returned; no response body.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowRead"
+    MutationOptions:
+      description: Supported methods returned; no response body.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowMutation"
+    Unauthorized:
+      description: Bearer credential is missing, malformed, or incorrect.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnauthorizedError"
+          example:
+            error:
+              code: unauthorized
+              message: A valid bearer credential is required.
+    InternalError:
+      description: |
+        The route caught an unexpected failure. This includes missing service
+        credential configuration and database/configuration failures.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalError"
+          example:
+            error:
+              code: internal_error
+              message: The request could not be completed.
+    AccountNotFound:
+      description: No Brokerage Account exists for the exact Investor ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AccountNotFoundError"
+          example:
+            error:
+              code: not_found
+              message: Brokerage Account not found.
+    InvalidAccountCreation:
+      description: Body or Idempotency-Key is missing, malformed, or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidAccountCreationError"
+          example:
+            error:
+              code: invalid_request
+              message: startingCashCents must be a non-negative safe integer and Idempotency-Key is required.
+    AccountCreationConflict:
+      description: The idempotency key conflicts, or the Investor already has an account.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/IdempotencyConflictError"
+              - $ref: "#/components/schemas/AccountAlreadyExistsError"
+          examples:
+            idempotencyConflict:
+              value:
+                error:
+                  code: idempotency_conflict
+                  message: Idempotency key was already used with a different request.
+            accountAlreadyExists:
+              value:
+                error:
+                  code: account_already_exists
+                  message: A Brokerage Account already exists for this Investor.
+    InvalidCashMovement:
+      description: Body, amount, or Idempotency-Key is missing, malformed, or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidCashMovementError"
+          example:
+            error:
+              code: invalid_request
+              message: amountCents must be a positive safe integer and Idempotency-Key is required.
+    IdempotencyConflict:
+      description: The Investor-scoped key was already used with a different normalized request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/IdempotencyConflictError"
+          example:
+            error:
+              code: idempotency_conflict
+              message: Idempotency key was already used with a different request.
+    DepositLimitExceeded:
+      description: The deposit would make Available Cash exceed the supported safe-integer limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CashLimitExceededError"
+          example:
+            error:
+              code: cash_limit_exceeded
+              message: Cash Deposit would exceed the supported cash limit.
+    WithdrawalInsufficientCash:
+      description: The withdrawal exceeds currently locked Available Cash.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WithdrawalInsufficientCashError"
+          example:
+            error:
+              code: insufficient_cash
+              message: Cash Withdrawal exceeds Available Cash.
+    InvalidMarketOrder:
+      description: Body, order fields, or Idempotency-Key is missing, malformed, or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidMarketOrderError"
+          example:
+            error:
+              code: invalid_request
+              message: side must be "buy" or "sell", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.
+    MarketOrderRejected:
+      description: A terminal domain rule rejected the Market Order.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/MarketClosedError"
+              - $ref: "#/components/schemas/UnsupportedTickerError"
+              - $ref: "#/components/schemas/BuyInsufficientCashError"
+              - $ref: "#/components/schemas/PositionLimitExceededError"
+              - $ref: "#/components/schemas/InsufficientSharesError"
+              - $ref: "#/components/schemas/AccountLimitExceededError"
+          examples:
+            marketClosed:
+              value:
+                error:
+                  code: market_closed
+                  message: Market Orders are accepted only during the Paper Trade session.
+            unsupportedTicker:
+              value:
+                error:
+                  code: unsupported_ticker
+                  message: Ticker is not a supported active US-listed stock or ETF.
+            insufficientCash:
+              value:
+                error:
+                  code: insufficient_cash
+                  message: Buy Market Order exceeds Available Cash.
+            positionLimitExceeded:
+              value:
+                error:
+                  code: position_limit_exceeded
+                  message: Buy Market Order would exceed the supported Position limit.
+            insufficientShares:
+              value:
+                error:
+                  code: insufficient_shares
+                  message: Sell Market Order exceeds the Position quantity.
+            accountLimitExceeded:
+              value:
+                error:
+                  code: account_limit_exceeded
+                  message: Sell Market Order would exceed the supported account limit.
+    InvalidTicker:
+      description: Ticker is malformed after trimming and uppercasing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidTickerError"
+          example:
+            error:
+              code: invalid_request
+              message: Ticker is malformed.
+    InvalidHistoricalPricesRequest:
+      description: Ticker or inclusive date range is invalid.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/InvalidTickerError"
+              - $ref: "#/components/schemas/InvalidDateRangeError"
+          examples:
+            malformedTicker:
+              value:
+                error:
+                  code: invalid_request
+                  message: Ticker is malformed.
+            invalidDates:
+              value:
+                error:
+                  code: invalid_request
+                  message: startDate and endDate must be valid YYYY-MM-DD dates in chronological order.
+    UnsupportedTicker:
+      description: |
+        Provider returned not-found, or facts identify an inactive security or
+        a listing outside the accepted exchange set. The quote endpoint reaches
+        this response only when its snapshot request returns provider `404`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnsupportedTickerError"
+          example:
+            error:
+              code: unsupported_ticker
+              message: Ticker is not a supported active US-listed stock or ETF.
+    MarketDataUnavailable:
+      description: |
+        Provider credentials, timeout, transport, status, JSON, or returned data
+        were unavailable or unusable. Provider details are not exposed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MarketDataUnavailableError"
+          example:
+            error:
+              code: market_data_unavailable
+              message: Market data is temporarily unavailable.
+
+  schemas:
+    SafeInteger:
+      type: integer
+      minimum: -9007199254740991
+      maximum: 9007199254740991
+    NonNegativeSafeInteger:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+    PositiveSafeInteger:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    CanonicalTicker:
+      type: string
+      pattern: "^[A-Z][A-Z0-9.-]{0,9}$"
+      minLength: 1
+      maxLength: 10
+      examples: [AAPL]
+
+    CreateBrokerageAccountRequest:
+      type: object
+      required: [startingCashCents]
+      additionalProperties: true
+      properties:
+        startingCashCents:
+          $ref: "#/components/schemas/NonNegativeSafeInteger"
+      description: Additional properties are accepted, ignored, and excluded from the idempotency fingerprint.
+    CashMovementRequest:
+      type: object
+      required: [amountCents]
+      additionalProperties: true
+      properties:
+        amountCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+      description: Additional properties are accepted, ignored, and excluded from the idempotency fingerprint.
+    MarketOrderRequest:
+      type: object
+      required: [side, ticker, quantity]
+      additionalProperties: true
+      properties:
+        side:
+          type: string
+          enum: [buy, sell]
+        ticker:
+          type: string
+          description: Trimmed and uppercased before the canonical Ticker rule is applied.
+        quantity:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+      description: Additional properties are accepted, ignored, and excluded from the idempotency fingerprint.
+
+    Position:
+      type: object
+      required: [ticker, quantity, averageCostBasisCents]
+      additionalProperties: false
+      properties:
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        quantity:
+          type: integer
+          minimum: 1
+          description: Whole shares.
+        averageCostBasisCents:
+          type: integer
+          minimum: 0
+          description: Rounded weighted-average cost basis in cents per share.
+    BrokerageAccount:
+      type: object
+      required:
+        [investorId, availableCashCents, realizedGainLossCents, positions]
+      additionalProperties: false
+      properties:
+        investorId:
+          type: string
+        availableCashCents:
+          type: integer
+          minimum: 0
+          description: Available Cash in cents.
+        realizedGainLossCents:
+          type: integer
+          description: Cumulative signed Realized Gain or Loss in cents.
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+          description: Positions ordered by Ticker ascending.
+
+    BuyFill:
+      type: object
+      required: [type, ticker, quantity, priceCents, totalCents, quoteTimestamp]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: buy_fill
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        quantity:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        priceCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        totalCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        quoteTimestamp:
+          type: string
+          format: date-time
+    SellFill:
+      type: object
+      required:
+        [
+          type,
+          ticker,
+          quantity,
+          priceCents,
+          totalCents,
+          costBasisCents,
+          realizedGainLossCents,
+          quoteTimestamp,
+        ]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: sell_fill
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        quantity:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        priceCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        totalCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        costBasisCents:
+          $ref: "#/components/schemas/NonNegativeSafeInteger"
+        realizedGainLossCents:
+          $ref: "#/components/schemas/SafeInteger"
+        quoteTimestamp:
+          type: string
+          format: date-time
+    MarketOrderFill:
+      oneOf:
+        - $ref: "#/components/schemas/BuyFill"
+        - $ref: "#/components/schemas/SellFill"
+      discriminator:
+        propertyName: type
+        mapping:
+          buy_fill: "#/components/schemas/BuyFill"
+          sell_fill: "#/components/schemas/SellFill"
+
+    StartingCashActivity:
+      type: object
+      required: [type, amountCents, createdAt]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: starting_cash
+        amountCents:
+          $ref: "#/components/schemas/NonNegativeSafeInteger"
+        createdAt:
+          type: string
+          format: date-time
+    CashDepositActivity:
+      type: object
+      required: [type, amountCents, createdAt]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: cash_deposit
+        amountCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        createdAt:
+          type: string
+          format: date-time
+    CashWithdrawalActivity:
+      type: object
+      required: [type, amountCents, createdAt]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: cash_withdrawal
+        amountCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        createdAt:
+          type: string
+          format: date-time
+    BuyFillActivity:
+      type: object
+      required:
+        [
+          type,
+          ticker,
+          quantity,
+          priceCents,
+          totalCents,
+          quoteTimestamp,
+          createdAt,
+        ]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: buy_fill
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        quantity:
+          type: integer
+          minimum: 1
+        priceCents:
+          type: integer
+          minimum: 1
+        totalCents:
+          type: integer
+          minimum: 0
+        quoteTimestamp:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    SellFillActivity:
+      type: object
+      required:
+        [
+          type,
+          ticker,
+          quantity,
+          priceCents,
+          totalCents,
+          costBasisCents,
+          realizedGainLossCents,
+          quoteTimestamp,
+          createdAt,
+        ]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: sell_fill
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        quantity:
+          type: integer
+          minimum: 1
+        priceCents:
+          type: integer
+          minimum: 1
+        totalCents:
+          type: integer
+          minimum: 0
+        costBasisCents:
+          type: integer
+          minimum: 0
+        realizedGainLossCents:
+          type: integer
+        quoteTimestamp:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    AccountActivity:
+      oneOf:
+        - $ref: "#/components/schemas/StartingCashActivity"
+        - $ref: "#/components/schemas/CashDepositActivity"
+        - $ref: "#/components/schemas/CashWithdrawalActivity"
+        - $ref: "#/components/schemas/BuyFillActivity"
+        - $ref: "#/components/schemas/SellFillActivity"
+      discriminator:
+        propertyName: type
+        mapping:
+          starting_cash: "#/components/schemas/StartingCashActivity"
+          cash_deposit: "#/components/schemas/CashDepositActivity"
+          cash_withdrawal: "#/components/schemas/CashWithdrawalActivity"
+          buy_fill: "#/components/schemas/BuyFillActivity"
+          sell_fill: "#/components/schemas/SellFillActivity"
+    AccountActivityList:
+      type: object
+      required: [activities]
+      additionalProperties: false
+      properties:
+        activities:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AccountActivity"
+
+    TradableSecurity:
+      type: object
+      required: [ticker, name, exchange]
+      additionalProperties: false
+      properties:
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        name:
+          type: string
+          minLength: 1
+          description: Trimmed provider name containing at least one non-whitespace character.
+        exchange:
+          type: string
+          minLength: 1
+          description: |
+            Trimmed provider value whose uppercase form is one of AMEX, ARCA,
+            BATS, CBOE, CBOE BZX, NASDAQ, NYSE, NYSE AMERICAN, or NYSE ARCA.
+            Provider casing is preserved.
+    SecurityQuote:
+      type: object
+      required: [ticker, priceCents, quoteTimestamp]
+      additionalProperties: false
+      properties:
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        priceCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        quoteTimestamp:
+          type: string
+          format: date-time
+          description: Provider source timestamp normalized to UTC ISO 8601.
+    DailyPrice:
+      type: object
+      required: [date, openCents, highCents, lowCents, closeCents, volume]
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+        openCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        highCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        lowCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        closeCents:
+          $ref: "#/components/schemas/PositiveSafeInteger"
+        volume:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+          description: Provider-supplied daily volume, or null when unavailable.
+      description: High is at least every OHLC value and low is at most every OHLC value.
+    DailyHistoricalPrices:
+      type: object
+      required: [ticker, prices]
+      additionalProperties: false
+      properties:
+        ticker:
+          $ref: "#/components/schemas/CanonicalTicker"
+        prices:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyPrice"
+          description: Provider order and duplicate dates are preserved; the array may be empty.
+
+    UnauthorizedError:
+      $ref: "#/components/schemas/UnauthorizedErrorEnvelope"
+    UnauthorizedErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/UnauthorizedErrorDetail"
+    UnauthorizedErrorDetail:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          const: unauthorized
+        message:
+          type: string
+          const: A valid bearer credential is required.
+    InternalError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/InternalErrorDetail"
+    InternalErrorDetail:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          const: internal_error
+        message:
+          type: string
+          const: The request could not be completed.
+    AccountNotFoundError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: not_found
+            message:
+              type: string
+              const: Brokerage Account not found.
+    InvalidAccountCreationError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: invalid_request
+            message:
+              type: string
+              const: startingCashCents must be a non-negative safe integer and Idempotency-Key is required.
+    IdempotencyConflictError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: idempotency_conflict
+            message:
+              type: string
+              const: Idempotency key was already used with a different request.
+    AccountAlreadyExistsError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: account_already_exists
+            message:
+              type: string
+              const: A Brokerage Account already exists for this Investor.
+    InvalidCashMovementError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: invalid_request
+            message:
+              type: string
+              const: amountCents must be a positive safe integer and Idempotency-Key is required.
+    CashLimitExceededError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: cash_limit_exceeded
+            message:
+              type: string
+              const: Cash Deposit would exceed the supported cash limit.
+    WithdrawalInsufficientCashError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: insufficient_cash
+            message:
+              type: string
+              const: Cash Withdrawal exceeds Available Cash.
+    InvalidMarketOrderError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: invalid_request
+            message:
+              type: string
+              const: side must be "buy" or "sell", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.
+    MarketClosedError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: market_closed
+            message:
+              type: string
+              const: Market Orders are accepted only during the Paper Trade session.
+    UnsupportedTickerError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: unsupported_ticker
+            message:
+              type: string
+              const: Ticker is not a supported active US-listed stock or ETF.
+    BuyInsufficientCashError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: insufficient_cash
+            message:
+              type: string
+              const: Buy Market Order exceeds Available Cash.
+    PositionLimitExceededError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: position_limit_exceeded
+            message:
+              type: string
+              const: Buy Market Order would exceed the supported Position limit.
+    InsufficientSharesError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: insufficient_shares
+            message:
+              type: string
+              const: Sell Market Order exceeds the Position quantity.
+    AccountLimitExceededError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: account_limit_exceeded
+            message:
+              type: string
+              const: Sell Market Order would exceed the supported account limit.
+    InvalidTickerError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: invalid_request
+            message:
+              type: string
+              const: Ticker is malformed.
+    InvalidDateRangeError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: invalid_request
+            message:
+              type: string
+              const: startDate and endDate must be valid YYYY-MM-DD dates in chronological order.
+    MarketDataUnavailableError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              const: market_data_unavailable
+            message:
+              type: string
+              const: Market data is temporarily unavailable.
