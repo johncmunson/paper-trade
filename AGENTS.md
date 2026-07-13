@@ -34,4 +34,4 @@ Domain documentation uses the single-context layout. See `docs/agents/domain.md`
 - If you ever need to run or execute Python, the command is `python3` and not `python`
 - Never write db migrations manually. Instead, modify the db schema in `db/schema/` and then run `pnpm db:generate`.
 - This project does not use CI. All testing, linting, and other checks are performed locally.
-- Available subagents: planner, reviewer, scout, and worker. Agent skill files might mention other subagent types. Map them to one of the available subagents (task dependent).
+- Available subagents: planner, reviewer, researcher, scout, and worker. Agent skill files might mention other subagent types. Map them to one of the available subagents (task dependent).
