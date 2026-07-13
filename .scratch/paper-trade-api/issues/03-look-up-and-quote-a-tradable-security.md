@@ -15,6 +15,6 @@
 - [ ] Provider authentication failures, timeouts, malformed responses, and unavailable service responses map to the agreed `503` market-data error without leaking upstream details.
 - [ ] Security facts and quotes are fetched on demand and are not persisted, prefetched, or placed behind a new application cache.
 - [ ] The Financial Datasets wrapper is the single provider boundary and can be replaced deterministically by tests without introducing a general provider abstraction.
-- [ ] Unit tests at the application-service seam cover normalization, supported stock and ETF fixtures, successful quotes, unsupported Tickers, malformed provider data, and provider failures.
+- [ ] Unit tests at the application-service seam cover normalization, supported stock and ETF fixtures, successful quotes, unsupported Tickers, malformed provider data, and provider failures, following the [Financial Datasets testing pattern](../financial-datasets-testing.md).
 - [ ] The live-database integration suite remains green and confirms market-data reads create no brokerage or market-data rows.
 - [ ] README documentation describes exact-Ticker lookup, current quotes, normalization, provider prerequisites, and error behavior.

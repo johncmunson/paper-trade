@@ -18,6 +18,6 @@
 - [ ] Account reads report updated Available Cash, Positions, and cumulative Realized Gain or Loss without requiring market data.
 - [ ] Account Activity returns Buy and Sell Fills alongside account opening and cash movements in newest-first order.
 - [ ] Unit tests cover profitable and losing sales, partial and complete sales, basis rounding, overselling, immediate proceeds, provider failure, idempotency, and rejected-operation atomicity.
-- [ ] Live-database integration tests cover the full account creation → deposit → repeated Buy → partial Sell → complete Sell → withdrawal lifecycle with Financial Datasets mocked.
+- [ ] Live-database integration tests cover the full account creation → deposit → repeated Buy → partial Sell → complete Sell → withdrawal lifecycle with Financial Datasets mocked according to the [Financial Datasets testing pattern](../financial-datasets-testing.md).
 - [ ] Live-database integration tests verify concurrent-sell protection and exact agreement between current state and immutable Account Activity.
 - [ ] README documentation completes the Sell contract, cost-basis and Realized Gain or Loss rules, supported end-to-end workflow, and explicit exclusions.

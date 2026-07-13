@@ -141,7 +141,7 @@ Persist only account state, Positions, Account Activity, and idempotency results
 - Require `TEST_DATABASE_URL`. Test startup fails if it is absent or equal to `DATABASE_URL`. Never fall back to development or production database configuration.
 - Load test environment variables explicitly for Vitest without using a `VITE_` prefix for secrets. Use an ignored local test environment file or an injected process environment.
 - Run migrations against the test database before integration tests and clean the four application tables between tests. Integration tests that share database state run serially.
-- Financial Datasets is never called live by automated unit or integration tests. Deterministic fixtures represent successful stock/ETF lookup, quotes, historical prices, unavailable Tickers, malformed responses, and provider failures.
+- Financial Datasets is never called live by automated unit or integration tests. Deterministic fixtures represent successful stock/ETF lookup, quotes, historical prices, unavailable Tickers, malformed responses, and provider failures. Follow the [Financial Datasets testing pattern](financial-datasets-testing.md).
 - There is no existing testing prior art in the repository because it is still create-next-app boilerplate. The test organization should therefore remain minimal rather than introducing multiple harnesses.
 - HTTP-level end-to-end tests are a future third layer. They may start a real Next.js server and use a live test database while still replacing Financial Datasets with a deterministic fake endpoint. They are not required by this spec.
 

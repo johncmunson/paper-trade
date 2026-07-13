@@ -21,5 +21,5 @@
 - [ ] Two concurrent Buy requests cannot both spend the same Available Cash, and the losing request receives a domain rejection rather than corrupting state.
 - [ ] Account reads show the resulting Position and cost basis without fetching a live quote; Account Activity includes the Buy Fill.
 - [ ] Unit tests cover market hours, the development override, quote failures, validation, insufficient cash, first and repeated purchases, idempotency, and atomic rejection.
-- [ ] Live-database integration tests verify a complete Buy flow, Position uniqueness, transaction rollback, idempotency uniqueness, and concurrent-buy protection with Financial Datasets mocked.
+- [ ] Live-database integration tests verify a complete Buy flow, Position uniqueness, transaction rollback, idempotency uniqueness, and concurrent-buy protection with Financial Datasets mocked according to the [Financial Datasets testing pattern](../financial-datasets-testing.md).
 - [ ] README documentation describes Buy Market Orders, session behavior, the development override, Fill fields, and common rejections.

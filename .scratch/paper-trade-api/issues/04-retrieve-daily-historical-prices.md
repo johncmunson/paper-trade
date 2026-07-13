@@ -12,6 +12,6 @@
 - [ ] Results preserve Financial Datasets' daily end-of-day coverage without synthesizing missing dates, intraday values, adjusted values, or history outside the provider response.
 - [ ] Unsupported Tickers and unavailable or malformed provider responses use the established stable error contract.
 - [ ] Historical prices are fetched on demand and are not persisted, scheduled, prefetched, or placed behind a new application cache.
-- [ ] Unit tests at the application-service seam cover valid ranges, date validation, price normalization and rounding, nullable volume, empty history, and provider failures.
+- [ ] Unit tests at the application-service seam cover valid ranges, date validation, price normalization and rounding, nullable volume, empty history, and provider failures, following the [Financial Datasets testing pattern](../financial-datasets-testing.md).
 - [ ] The shared integration suite remains green and confirms historical-price reads do not mutate brokerage state.
 - [ ] README documentation records the query parameters, daily OHLCV response, and Financial Datasets coverage limitations.
