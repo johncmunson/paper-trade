@@ -1,5 +1,6 @@
 import { expect, test } from "vitest"
 import { getDatabaseUrl } from "../lib/databaseUrl"
+import { assertSafeTestDatabase } from "../lib/testDatabase"
 
 test("selects only the current environment's database URLs", () => {
   const originalEnv = process.env
@@ -39,4 +40,22 @@ test("selects only the current environment's database URLs", () => {
   } finally {
     process.env = originalEnv
   }
+})
+
+test("refuses missing or shared integration test databases", () => {
+  expect(() => assertSafeTestDatabase({})).toThrow(
+    /TEST_DATABASE_URL must be set/,
+  )
+  expect(() =>
+    assertSafeTestDatabase({
+      TEST_DATABASE_URL: "postgres://shared",
+      DATABASE_URL: "postgres://shared",
+    }),
+  ).toThrow(/must not equal DATABASE_URL/)
+  expect(() =>
+    assertSafeTestDatabase({
+      TEST_DATABASE_URL: "postgres://test",
+      DATABASE_URL: "postgres://development",
+    }),
+  ).not.toThrow()
 })

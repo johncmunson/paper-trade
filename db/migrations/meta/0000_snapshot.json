@@ -1,0 +1,373 @@
+{
+  "id": "b08f788b-53cf-46dc-86b1-25061b9c7000",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.account_activities": {
+      "name": "account_activities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "account_activities_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "investor_id": {
+          "name": "investor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_cents": {
+          "name": "amount_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ticker": {
+          "name": "ticker",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "price_cents": {
+          "name": "price_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_cents": {
+          "name": "total_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_basis_cents": {
+          "name": "cost_basis_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "realized_gain_loss_cents": {
+          "name": "realized_gain_loss_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quote_timestamp": {
+          "name": "quote_timestamp",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "account_activities_investor_id_accounts_investor_id_fk": {
+          "name": "account_activities_investor_id_accounts_investor_id_fk",
+          "tableFrom": "account_activities",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "investor_id"
+          ],
+          "columnsTo": [
+            "investor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "account_activities_type_valid": {
+          "name": "account_activities_type_valid",
+          "value": "\"account_activities\".\"type\" in ('starting_cash', 'cash_deposit', 'cash_withdrawal', 'buy_fill', 'sell_fill')"
+        },
+        "account_activities_amount_non_negative": {
+          "name": "account_activities_amount_non_negative",
+          "value": "\"account_activities\".\"amount_cents\" is null or \"account_activities\".\"amount_cents\" >= 0"
+        },
+        "account_activities_ticker_canonical": {
+          "name": "account_activities_ticker_canonical",
+          "value": "\"account_activities\".\"ticker\" is null or (\"account_activities\".\"ticker\" <> '' and \"account_activities\".\"ticker\" = upper(btrim(\"account_activities\".\"ticker\")))"
+        },
+        "account_activities_quantity_positive": {
+          "name": "account_activities_quantity_positive",
+          "value": "\"account_activities\".\"quantity\" is null or \"account_activities\".\"quantity\" > 0"
+        },
+        "account_activities_price_positive": {
+          "name": "account_activities_price_positive",
+          "value": "\"account_activities\".\"price_cents\" is null or \"account_activities\".\"price_cents\" > 0"
+        },
+        "account_activities_total_non_negative": {
+          "name": "account_activities_total_non_negative",
+          "value": "\"account_activities\".\"total_cents\" is null or \"account_activities\".\"total_cents\" >= 0"
+        },
+        "account_activities_cost_basis_non_negative": {
+          "name": "account_activities_cost_basis_non_negative",
+          "value": "\"account_activities\".\"cost_basis_cents\" is null or \"account_activities\".\"cost_basis_cents\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.accounts": {
+      "name": "accounts",
+      "schema": "",
+      "columns": {
+        "investor_id": {
+          "name": "investor_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "available_cash_cents": {
+          "name": "available_cash_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "realized_gain_loss_cents": {
+          "name": "realized_gain_loss_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "accounts_available_cash_non_negative": {
+          "name": "accounts_available_cash_non_negative",
+          "value": "\"accounts\".\"available_cash_cents\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.idempotency_keys": {
+      "name": "idempotency_keys",
+      "schema": "",
+      "columns": {
+        "investor_id": {
+          "name": "investor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_fingerprint": {
+          "name": "request_fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_status": {
+          "name": "response_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_body": {
+          "name": "response_body",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idempotency_keys_investor_id_accounts_investor_id_fk": {
+          "name": "idempotency_keys_investor_id_accounts_investor_id_fk",
+          "tableFrom": "idempotency_keys",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "investor_id"
+          ],
+          "columnsTo": [
+            "investor_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "idempotency_keys_investor_id_key_pk": {
+          "name": "idempotency_keys_investor_id_key_pk",
+          "columns": [
+            "investor_id",
+            "key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "idempotency_keys_response_status_valid": {
+          "name": "idempotency_keys_response_status_valid",
+          "value": "\"idempotency_keys\".\"response_status\" between 100 and 599"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.positions": {
+      "name": "positions",
+      "schema": "",
+      "columns": {
+        "investor_id": {
+          "name": "investor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ticker": {
+          "name": "ticker",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_cost_basis_cents": {
+          "name": "total_cost_basis_cents",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "positions_investor_id_accounts_investor_id_fk": {
+          "name": "positions_investor_id_accounts_investor_id_fk",
+          "tableFrom": "positions",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "investor_id"
+          ],
+          "columnsTo": [
+            "investor_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "positions_investor_id_ticker_pk": {
+          "name": "positions_investor_id_ticker_pk",
+          "columns": [
+            "investor_id",
+            "ticker"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "positions_ticker_canonical": {
+          "name": "positions_ticker_canonical",
+          "value": "\"positions\".\"ticker\" <> '' and \"positions\".\"ticker\" = upper(btrim(\"positions\".\"ticker\"))"
+        },
+        "positions_quantity_positive": {
+          "name": "positions_quantity_positive",
+          "value": "\"positions\".\"quantity\" > 0"
+        },
+        "positions_cost_basis_non_negative": {
+          "name": "positions_cost_basis_non_negative",
+          "value": "\"positions\".\"total_cost_basis_cents\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

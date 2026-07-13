@@ -1,6 +1,10 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig } from "vitest/config"
 
 export default defineConfig({
+  resolve: {
+    alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
+  },
   test: {
     projects: [
       {
@@ -14,6 +18,9 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["test/**/*.integration.test.ts"],
+          setupFiles: ["./test/integrationSetup.ts"],
+          fileParallelism: false,
+          hookTimeout: 30_000,
         },
       },
     ],
