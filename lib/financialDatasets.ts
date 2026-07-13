@@ -140,6 +140,9 @@ export async function fetchFinancialDatasetsHistoricalPrices(
     end_date: endDate,
   })
   if (result.status !== "ok") return result
+  if (typeof result.data !== "object" || result.data === null) {
+    return { status: "unavailable" }
+  }
 
   const response = result.data as {
     ticker?: unknown

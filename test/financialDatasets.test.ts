@@ -174,5 +174,18 @@ describe("Financial Datasets wrapper", () => {
         "2026-01-05",
       ),
     ).toEqual({ status: "unavailable" })
+
+    server.use(
+      http.get("https://api.financialdatasets.ai/prices", () =>
+        HttpResponse.json(null),
+      ),
+    )
+    expect(
+      await fetchFinancialDatasetsHistoricalPrices(
+        "AAPL",
+        "2026-01-02",
+        "2026-01-05",
+      ),
+    ).toEqual({ status: "unavailable" })
   })
 })
