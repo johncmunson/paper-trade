@@ -1,5 +1,8 @@
 import { getDailyHistoricalPrices } from "../../../../../lib/brokerageService"
-import { fetchFinancialDatasetsHistoricalPrices } from "../../../../../lib/financialDatasets"
+import {
+  fetchFinancialDatasetsFacts,
+  fetchFinancialDatasetsHistoricalPrices,
+} from "../../../../../lib/financialDatasets"
 import {
   authenticationError,
   internalError,
@@ -20,6 +23,7 @@ export async function GET(
     const parameters = new URL(request.url).searchParams
     return json(
       await getDailyHistoricalPrices(
+        fetchFinancialDatasetsFacts,
         fetchFinancialDatasetsHistoricalPrices,
         ticker,
         parameters.get("startDate") ?? "",

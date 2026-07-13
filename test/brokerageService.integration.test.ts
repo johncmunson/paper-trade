@@ -49,6 +49,7 @@ describe("Brokerage Account persistence", () => {
     expect(
       (
         await getDailyHistoricalPrices(
+          fetchFacts,
           fetchPrices,
           "AAPL",
           "2026-01-01",

@@ -6,6 +6,18 @@ import {
 } from "../lib/brokerageService"
 import type { FinancialDatasetsResult } from "../lib/financialDatasets"
 
+const fetchSupportedFacts = async (
+  ticker: string,
+): Promise<FinancialDatasetsResult> => ({
+  status: "ok",
+  data: {
+    ticker,
+    name: "Supported Security",
+    exchange: "NASDAQ",
+    isActive: true,
+  },
+})
+
 describe("market-data application service", () => {
   test("looks up an exact Ticker after trimming and normalizing it", async () => {
     let requestedTicker = ""
@@ -244,6 +256,7 @@ describe("market-data application service", () => {
 
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         fetchPrices,
         " aapl ",
         "2026-01-02",
@@ -293,6 +306,7 @@ describe("market-data application service", () => {
 
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         fetchPrices,
         "AAPL",
         "2026-02-30",
@@ -301,6 +315,7 @@ describe("market-data application service", () => {
     ).toEqual(expected)
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         fetchPrices,
         "AAPL",
         "2026-13-01",
@@ -309,6 +324,7 @@ describe("market-data application service", () => {
     ).toEqual(expected)
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         fetchPrices,
         "AAPL",
         "2026-03-02",
@@ -320,6 +336,7 @@ describe("market-data application service", () => {
   test("preserves empty daily history", async () => {
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         async () => ({
           status: "ok",
           data: { ticker: "AAPL", prices: [] },
@@ -344,6 +361,7 @@ describe("market-data application service", () => {
 
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         async () => ({ status: "unavailable" }),
         "AAPL",
         "2026-01-01",
@@ -352,8 +370,32 @@ describe("market-data application service", () => {
     ).toEqual(unavailable)
     expect(
       await getDailyHistoricalPrices(
+        fetchSupportedFacts,
         async () => ({ status: "not_found" }),
         "NOPE",
+        "2026-01-01",
+        "2026-01-02",
+      ),
+    ).toMatchObject({
+      status: 422,
+      body: { error: { code: "unsupported_ticker" } },
+    })
+
+    expect(
+      await getDailyHistoricalPrices(
+        async () => ({
+          status: "ok",
+          data: {
+            ticker: "OLD",
+            name: "Inactive Security",
+            exchange: "NYSE",
+            isActive: false,
+          },
+        }),
+        async () => {
+          throw new Error("should not be called")
+        },
+        "OLD",
         "2026-01-01",
         "2026-01-02",
       ),
@@ -393,6 +435,7 @@ describe("market-data application service", () => {
     ]) {
       expect(
         await getDailyHistoricalPrices(
+          fetchSupportedFacts,
           async () => ({ status: "ok", data }),
           "AAPL",
           "2026-01-01",

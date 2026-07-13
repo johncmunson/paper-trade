@@ -353,6 +353,7 @@ export async function quoteTradableSecurity(
 }
 
 export async function getDailyHistoricalPrices(
+  fetchFacts: (ticker: string) => Promise<FinancialDatasetsResult>,
   fetchPrices: (
     ticker: string,
     startDate: string,
@@ -367,6 +368,9 @@ export async function getDailyHistoricalPrices(
   if (!isDate(startDate) || !isDate(endDate) || startDate > endDate) {
     return invalidDateRange
   }
+
+  const security = await lookUpTradableSecurity(fetchFacts, ticker)
+  if (security.status !== 200) return security
 
   const result = await fetchPrices(ticker, startDate, endDate)
   if (result.status === "not_found") return unsupportedTicker
