@@ -23,36 +23,40 @@ export function DocShell({
     )
     if (targets.length === 0) return
 
-    const visible = new Map<string, number>()
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const id = entry.target.getAttribute("data-doc-section")
-          if (!id) continue
-          if (entry.isIntersecting) {
-            visible.set(id, entry.intersectionRatio)
-          } else {
-            visible.delete(id)
-          }
-        }
-        let topId = ""
-        let topPos = Infinity
-        for (const target of targets) {
-          const id = target.getAttribute("data-doc-section")
-          if (!id || !visible.has(id)) continue
-          const pos = target.getBoundingClientRect().top
-          if (pos < topPos) {
-            topPos = pos
-            topId = id
-          }
-        }
-        if (topId) setActiveId(topId)
-      },
-      { rootMargin: "-72px 0px -65% 0px", threshold: [0, 0.25, 0.5, 1] },
-    )
+    // The reading line sits just below the sticky header. The active section is
+    // the last one whose top has scrolled above this line — i.e. the section you
+    // are currently reading. This treats every section identically, including
+    // the first one (Introduction), instead of letting a tall earlier section
+    // stay stuck as active.
+    const marker = 96
 
-    targets.forEach((t) => observer.observe(t))
-    return () => observer.disconnect()
+    let frame = 0
+    const computeActive = () => {
+      frame = 0
+      let currentId = targets[0].getAttribute("data-doc-section") ?? ""
+      for (const target of targets) {
+        if (target.getBoundingClientRect().top <= marker) {
+          currentId = target.getAttribute("data-doc-section") ?? currentId
+        } else {
+          break
+        }
+      }
+      setActiveId(currentId)
+    }
+
+    const onScroll = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(computeActive)
+    }
+
+    computeActive()
+    window.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("resize", onScroll)
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      window.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", onScroll)
+    }
   }, [])
 
   return (
