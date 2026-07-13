@@ -28,3 +28,20 @@ export function json(result: ApplicationResult) {
 export function authenticationError(request: Request) {
   return hasValidServiceCredential(request) ? undefined : json(unauthorized)
 }
+
+export function methodNotAllowed(allow: string) {
+  return () =>
+    Response.json(
+      {
+        error: {
+          code: "method_not_allowed",
+          message: "Method not allowed.",
+        },
+      },
+      { status: 405, headers: { Allow: allow } },
+    )
+}
+
+export function options(allow: string) {
+  return () => new Response(null, { status: 204, headers: { Allow: allow } })
+}

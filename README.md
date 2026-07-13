@@ -49,6 +49,8 @@ Missing or invalid credentials return:
 }
 ```
 
+Unsupported HTTP methods return `405 method_not_allowed` with an `Allow` header listing the methods supported by that endpoint.
+
 ## Brokerage Account endpoints
 
 ### Create an account

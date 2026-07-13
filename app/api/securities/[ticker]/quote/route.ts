@@ -4,9 +4,21 @@ import {
   authenticationError,
   internalError,
   json,
+  methodNotAllowed,
+  options,
 } from "../../../../../lib/routeResponses"
 
 export const runtime = "nodejs"
+
+const allow = "GET, HEAD, OPTIONS"
+const unsupported = methodNotAllowed(allow)
+export const OPTIONS = options(allow)
+export {
+  unsupported as DELETE,
+  unsupported as PATCH,
+  unsupported as POST,
+  unsupported as PUT,
+}
 
 export async function GET(
   request: Request,

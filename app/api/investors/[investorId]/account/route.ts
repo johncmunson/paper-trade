@@ -7,9 +7,16 @@ import {
   authenticationError,
   internalError,
   json,
+  methodNotAllowed,
+  options,
 } from "../../../../../lib/routeResponses"
 
 export const runtime = "nodejs"
+
+const allow = "GET, HEAD, OPTIONS, POST"
+const unsupported = methodNotAllowed(allow)
+export const OPTIONS = options(allow)
+export { unsupported as DELETE, unsupported as PATCH, unsupported as PUT }
 
 const invalidRequest: ApplicationResult = {
   status: 400,
