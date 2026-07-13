@@ -1,0 +1,14 @@
+# invalid_code
+
+The provided authentication code is invalid or expired.
+
+
+
+This error occurs when the authentication code is invalid, expired, or cannot be verified.
+
+How to fix [#how-to-fix]
+
+* Restart the authentication flow to generate a new code
+* Ensure the code is used only once and within its valid time window
+* Verify that the correct code is being sent to the callback endpoint
+
