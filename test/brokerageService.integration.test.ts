@@ -5,7 +5,10 @@ import { accountActivities, positions } from "../db/schema"
 import { postgresBrokerageStore } from "../db/brokerageStore"
 import {
   createBrokerageAccount,
+  depositCash,
+  listAccountActivities,
   readBrokerageAccount,
+  withdrawCash,
 } from "../lib/brokerageService"
 
 describe("Brokerage Account persistence", () => {
@@ -56,6 +59,228 @@ describe("Brokerage Account persistence", () => {
       investorId: command.investorId,
       type: "starting_cash",
       amountCents: command.startingCashCents,
+    })
+  })
+
+  test("moves cash idempotently and preserves immutable Account Activity on rejection", async () => {
+    const investorId = "cash-lifecycle-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 100_00,
+      idempotencyKey: "open-cash-lifecycle",
+    })
+
+    const deposit = await depositCash(postgresBrokerageStore, {
+      investorId,
+      amountCents: 50_00,
+      idempotencyKey: "deposit-1",
+    })
+    expect(deposit).toMatchObject({
+      status: 200,
+      body: { availableCashCents: 150_00 },
+    })
+    expect(
+      await depositCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 50_00,
+        idempotencyKey: "deposit-1",
+      }),
+    ).toEqual(deposit)
+    expect(
+      await depositCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 50_01,
+        idempotencyKey: "deposit-1",
+      }),
+    ).toMatchObject({
+      status: 409,
+      body: { error: { code: "idempotency_conflict" } },
+    })
+
+    expect(
+      await withdrawCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 20_00,
+        idempotencyKey: "withdraw-1",
+      }),
+    ).toMatchObject({
+      status: 200,
+      body: { availableCashCents: 130_00 },
+    })
+    expect(
+      await withdrawCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 130_01,
+        idempotencyKey: "withdraw-rejected",
+      }),
+    ).toMatchObject({
+      status: 422,
+      body: { error: { code: "insufficient_cash" } },
+    })
+
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toMatchObject({ status: 200, body: { availableCashCents: 130_00 } })
+    expect(
+      await listAccountActivities(postgresBrokerageStore, investorId),
+    ).toEqual({
+      status: 200,
+      body: {
+        activities: [
+          {
+            type: "cash_withdrawal",
+            amountCents: 20_00,
+            createdAt: expect.any(String),
+          },
+          {
+            type: "cash_deposit",
+            amountCents: 50_00,
+            createdAt: expect.any(String),
+          },
+          {
+            type: "starting_cash",
+            amountCents: 100_00,
+            createdAt: expect.any(String),
+          },
+        ],
+      },
+    })
+  })
+
+  test("replays an unknown-Investor cash response after the account is created", async () => {
+    const command = {
+      investorId: "initially-missing-investor",
+      amountCents: 5_00,
+      idempotencyKey: "deposit-while-missing",
+    }
+    const missing = await depositCash(postgresBrokerageStore, command)
+    expect(missing).toMatchObject({
+      status: 404,
+      body: { error: { code: "not_found" } },
+    })
+
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId: command.investorId,
+      startingCashCents: 10_00,
+      idempotencyKey: "open-after-missing",
+    })
+
+    expect(await depositCash(postgresBrokerageStore, command)).toEqual(missing)
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, command.investorId),
+    ).toMatchObject({ status: 200, body: { availableCashCents: 10_00 } })
+  })
+
+  test("serializes concurrent withdrawals against Available Cash", async () => {
+    const investorId = "concurrent-withdrawal-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 10_00,
+      idempotencyKey: "open-concurrent-withdrawal",
+    })
+
+    const results = await Promise.all([
+      withdrawCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 7_00,
+        idempotencyKey: "concurrent-withdrawal-1",
+      }),
+      withdrawCash(postgresBrokerageStore, {
+        investorId,
+        amountCents: 7_00,
+        idempotencyKey: "concurrent-withdrawal-2",
+      }),
+    ])
+
+    expect(results.map((result) => result.status).sort()).toEqual([200, 422])
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toMatchObject({ status: 200, body: { availableCashCents: 3_00 } })
+    expect(
+      await listAccountActivities(postgresBrokerageStore, investorId),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        activities: [
+          { type: "cash_withdrawal", amountCents: 7_00 },
+          { type: "starting_cash", amountCents: 10_00 },
+        ],
+      },
+    })
+  })
+
+  test("returns Fill Account Activity without persistence fields", async () => {
+    const investorId = "fill-activity-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 10_00,
+      idempotencyKey: "open-fill-activity",
+    })
+    const quoteTimestamp = new Date("2026-07-13T14:30:00.000Z")
+    await expect(
+      db.insert(accountActivities).values({
+        investorId,
+        type: "buy_fill",
+        ticker: "AAPL",
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23514" } })
+
+    await db.insert(accountActivities).values([
+      {
+        investorId,
+        type: "buy_fill",
+        ticker: "AAPL",
+        quantity: 2,
+        priceCents: 100_00,
+        totalCents: 200_00,
+        quoteTimestamp,
+      },
+      {
+        investorId,
+        type: "sell_fill",
+        ticker: "AAPL",
+        quantity: 1,
+        priceCents: 120_00,
+        totalCents: 120_00,
+        costBasisCents: 100_00,
+        realizedGainLossCents: 20_00,
+        quoteTimestamp,
+      },
+    ])
+
+    expect(
+      await listAccountActivities(postgresBrokerageStore, investorId),
+    ).toEqual({
+      status: 200,
+      body: {
+        activities: [
+          {
+            type: "sell_fill",
+            ticker: "AAPL",
+            quantity: 1,
+            priceCents: 120_00,
+            totalCents: 120_00,
+            costBasisCents: 100_00,
+            realizedGainLossCents: 20_00,
+            quoteTimestamp: quoteTimestamp.toISOString(),
+            createdAt: expect.any(String),
+          },
+          {
+            type: "buy_fill",
+            ticker: "AAPL",
+            quantity: 2,
+            priceCents: 100_00,
+            totalCents: 200_00,
+            quoteTimestamp: quoteTimestamp.toISOString(),
+            createdAt: expect.any(String),
+          },
+          {
+            type: "starting_cash",
+            amountCents: 10_00,
+            createdAt: expect.any(String),
+          },
+        ],
+      },
     })
   })
 

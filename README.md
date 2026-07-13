@@ -86,6 +86,85 @@ curl http://localhost:3000/api/investors/investor-123/account \
 
 Errors use the stable shape `{ "error": { "code": string, "message": string } }`. Invalid request bodies or a missing idempotency key return `400 invalid_request`; internal database details and credentials are never returned.
 
+### Move cash
+
+Cash Deposits and Cash Withdrawals require an `Idempotency-Key` and a positive safe-integer `amountCents`. A successful movement returns `200` with the updated Brokerage Account and records immutable Account Activity atomically.
+
+```bash
+curl -i -X POST http://localhost:3000/api/investors/investor-123/account/deposits \
+  -H 'Authorization: Bearer replace-with-a-shared-secret' \
+  -H 'Idempotency-Key: deposit-investor-123-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"amountCents":25000}'
+```
+
+```json
+{
+  "investorId": "investor-123",
+  "availableCashCents": 1025000,
+  "realizedGainLossCents": 0,
+  "positions": []
+}
+```
+
+Withdraw through `/withdrawals` with the same request shape:
+
+```bash
+curl -i -X POST http://localhost:3000/api/investors/investor-123/account/withdrawals \
+  -H 'Authorization: Bearer replace-with-a-shared-secret' \
+  -H 'Idempotency-Key: withdrawal-investor-123-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"amountCents":30000}'
+```
+
+A Cash Withdrawal greater than Available Cash returns `422` and changes neither the account nor Account Activity:
+
+```json
+{
+  "error": {
+    "code": "insufficient_cash",
+    "message": "Cash Withdrawal exceeds Available Cash."
+  }
+}
+```
+
+Zero, negative, fractional, unsafe, or malformed amounts return `400 invalid_request`; an unknown Investor returns `404 not_found`. A Cash Deposit that would make Available Cash exceed JavaScript's safe-integer range returns `422 cash_limit_exceeded`.
+
+Retrying the same Investor, key, operation, and amount returns the original status and body. Reusing a key for a different amount or cash movement returns `409 idempotency_conflict` without moving cash again.
+
+### List Account Activity
+
+```bash
+curl http://localhost:3000/api/investors/investor-123/account/activities \
+  -H 'Authorization: Bearer replace-with-a-shared-secret'
+```
+
+`GET` returns at most 100 activities, newest first. Stable types are `starting_cash`, `cash_deposit`, `cash_withdrawal`, `buy_fill`, and `sell_fill`; Fill activities additionally expose their Ticker, quantity, integer-cent execution fields, and quote timestamp. Database identifiers and other persistence fields are not exposed.
+
+```json
+{
+  "activities": [
+    {
+      "type": "cash_withdrawal",
+      "amountCents": 30000,
+      "createdAt": "2026-07-13T12:02:00.000Z"
+    },
+    {
+      "type": "cash_deposit",
+      "amountCents": 25000,
+      "createdAt": "2026-07-13T12:01:00.000Z"
+    },
+    {
+      "type": "starting_cash",
+      "amountCents": 1000000,
+      "createdAt": "2026-07-13T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+An unknown Investor returns `404 not_found`.
+
 ## Tests
 
 ```bash

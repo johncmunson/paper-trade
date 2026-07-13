@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Open and inspect a Brokerage Account
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `POST /api/investors/{investorId}/account/deposits` accepts a positive safe-integer `amountCents`, requires an idempotency key, and immediately increases Available Cash.
 - [ ] `POST /api/investors/{investorId}/account/withdrawals` accepts a positive safe-integer `amountCents`, requires an idempotency key, and immediately decreases Available Cash.

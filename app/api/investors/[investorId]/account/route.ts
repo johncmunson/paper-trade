@@ -3,19 +3,13 @@ import {
   readBrokerageAccount,
   type ApplicationResult,
 } from "../../../../../lib/brokerageService"
-import { hasValidServiceCredential } from "../../../../../lib/serviceAuthentication"
+import {
+  authenticationError,
+  internalError,
+  json,
+} from "../../../../../lib/routeResponses"
 
 export const runtime = "nodejs"
-
-const unauthorized: ApplicationResult = {
-  status: 401,
-  body: {
-    error: {
-      code: "unauthorized",
-      message: "A valid bearer credential is required.",
-    },
-  },
-}
 
 const invalidRequest: ApplicationResult = {
   status: 400,
@@ -26,24 +20,6 @@ const invalidRequest: ApplicationResult = {
         "startingCashCents must be a non-negative safe integer and Idempotency-Key is required.",
     },
   },
-}
-
-const internalError: ApplicationResult = {
-  status: 500,
-  body: {
-    error: {
-      code: "internal_error",
-      message: "The request could not be completed.",
-    },
-  },
-}
-
-function json(result: ApplicationResult) {
-  return Response.json(result.body, { status: result.status })
-}
-
-function authenticationError(request: Request) {
-  return hasValidServiceCredential(request) ? undefined : json(unauthorized)
 }
 
 export async function POST(

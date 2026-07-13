@@ -83,6 +83,29 @@ export const accountActivities = pgTable(
       sql`${table.type} in ('starting_cash', 'cash_deposit', 'cash_withdrawal', 'buy_fill', 'sell_fill')`,
     ),
     check(
+      "account_activities_required_fields",
+      sql`(
+        ${table.type} in ('starting_cash', 'cash_deposit', 'cash_withdrawal')
+        and ${table.amountCents} is not null
+      ) or (
+        ${table.type} = 'buy_fill'
+        and ${table.ticker} is not null
+        and ${table.quantity} is not null
+        and ${table.priceCents} is not null
+        and ${table.totalCents} is not null
+        and ${table.quoteTimestamp} is not null
+      ) or (
+        ${table.type} = 'sell_fill'
+        and ${table.ticker} is not null
+        and ${table.quantity} is not null
+        and ${table.priceCents} is not null
+        and ${table.totalCents} is not null
+        and ${table.costBasisCents} is not null
+        and ${table.realizedGainLossCents} is not null
+        and ${table.quoteTimestamp} is not null
+      )`,
+    ),
+    check(
       "account_activities_amount_non_negative",
       sql`${table.amountCents} is null or ${table.amountCents} >= 0`,
     ),
@@ -112,9 +135,7 @@ export const accountActivities = pgTable(
 export const idempotencyKeys = pgTable(
   "idempotency_keys",
   {
-    investorId: text()
-      .notNull()
-      .references(() => accounts.investorId, { onDelete: "restrict" }),
+    investorId: text().notNull(),
     key: text().notNull(),
     requestFingerprint: text().notNull(),
     responseStatus: integer().notNull(),
