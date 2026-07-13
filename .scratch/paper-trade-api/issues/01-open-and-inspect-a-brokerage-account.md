@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The generated frontend and unused public assets are removed; the project builds and runs as an API-only Next.js service.
 - [ ] A shared server-side bearer credential protects every delivered endpoint, and missing or invalid credentials return the agreed `401` JSON error without exposing secrets.
