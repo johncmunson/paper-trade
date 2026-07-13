@@ -58,6 +58,9 @@ function memoryStore() {
             ).toISOString(),
           })
         },
+        findPosition: async () => undefined,
+        upsertPosition: async () => {},
+        insertBuyActivity: async () => {},
         insertIdempotency: async (record) => {
           idempotency.set(
             `${record.investorId}:${record.key}`,

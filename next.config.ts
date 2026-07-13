@@ -1,5 +1,8 @@
 import type { NextConfig } from "next"
+import { marketAlwaysOpen } from "./lib/marketConfig"
 
-const nextConfig: NextConfig = {/* config options here */}
+marketAlwaysOpen()
+
+const nextConfig: NextConfig = {}
 
 export default nextConfig

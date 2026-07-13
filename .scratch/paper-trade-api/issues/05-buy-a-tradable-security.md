@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Move cash and list Account Activity; 03 — Look up and quote a Tradable Security
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `POST /api/investors/{investorId}/account/market-orders` accepts `side: "buy"`, a normalized Ticker, and a positive safe whole-share `quantity`, and requires an idempotency key.
 - [ ] Buy Market Orders are accepted only Monday through Friday from 9:30 AM inclusive to 4:00 PM exclusive in `America/New_York`.

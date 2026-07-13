@@ -20,6 +20,7 @@ DATABASE_URL=postgres://...          # pooled application connection
 DATABASE_URL_UNPOOLED=postgres://... # direct migration connection (optional)
 PAPER_TRADE_SERVICE_CREDENTIAL=replace-with-a-shared-secret
 FINANCIAL_DATASETS_API_KEY=replace-with-a-provider-key
+PAPER_TRADE_MARKET_ALWAYS_OPEN=false # development only
 ```
 
 After changing `db/schema/`, generate and apply a migration:
@@ -164,6 +165,37 @@ curl http://localhost:3000/api/investors/investor-123/account/activities \
 ```
 
 An unknown Investor returns `404 not_found`.
+
+### Buy a Tradable Security
+
+`POST /api/investors/{investorId}/account/market-orders` requires an `Idempotency-Key`, `side: "buy"`, a Ticker that normalizes to a supported Tradable Security, and a positive safe whole-share quantity.
+
+```bash
+curl -i -X POST http://localhost:3000/api/investors/investor-123/account/market-orders \
+  -H 'Authorization: Bearer replace-with-a-shared-secret' \
+  -H 'Idempotency-Key: buy-investor-123-aapl-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"side":"buy","ticker":" aapl ","quantity":2}'
+```
+
+A successful Buy Market Order fetches a fresh quote, rounds it to cents, immediately updates Available Cash and the Position, records one immutable Fill, and returns `200`:
+
+```json
+{
+  "type": "buy_fill",
+  "ticker": "AAPL",
+  "quantity": 2,
+  "priceCents": 21134,
+  "totalCents": 42268,
+  "quoteTimestamp": "2026-07-13T14:30:00.000Z"
+}
+```
+
+Repeated Buy Market Orders retain one Position and add integer-cent total cost basis; account reads expose its rounded weighted-average cost basis without fetching a live quote. There are no fees, spread, slippage, settlement delay, partial fills, and Market Orders are not persisted.
+
+Market Orders are accepted Monday through Friday from 9:30 AM inclusive to 4:00 PM exclusive in `America/New_York`. Version one intentionally ignores exchange holidays and early closes. Local development may set `PAPER_TRADE_MARKET_ALWAYS_OPEN=true`; this bypasses only the session check, and production refuses to start with it enabled.
+
+Common rejections are `400 invalid_request` for an invalid side, malformed Ticker, quantity, or missing idempotency key; `404 not_found` for an unknown Investor; `422 unsupported_ticker`; `422 market_closed`; `422 insufficient_cash`; `409 idempotency_conflict`; and `503 market_data_unavailable`. Quote failures change no financial or idempotency state. Insufficient-cash rejection creates no Fill. Replaying the same key and normalized payload returns the original Fill or terminal domain rejection without buying again.
 
 ## Tradable Security endpoints
 

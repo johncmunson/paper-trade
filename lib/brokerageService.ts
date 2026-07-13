@@ -62,6 +62,15 @@ export type SecurityQuote = {
   quoteTimestamp: string
 }
 
+export type BuyFill = {
+  type: "buy_fill"
+  ticker: string
+  quantity: number
+  priceCents: number
+  totalCents: number
+  quoteTimestamp: string
+}
+
 export type DailyHistoricalPrices = {
   ticker: string
   prices: Array<{
@@ -85,6 +94,7 @@ export type ApplicationResult = {
     | AccountActivityList
     | TradableSecurity
     | SecurityQuote
+    | BuyFill
     | DailyHistoricalPrices
     | ErrorBody
 }
@@ -116,6 +126,17 @@ type BrokerageTransaction = {
     type: "cash_deposit" | "cash_withdrawal",
     amountCents: number,
   ): Promise<void>
+  findPosition(
+    investorId: string,
+    ticker: string,
+  ): Promise<{ quantity: number; totalCostBasisCents: number } | undefined>
+  upsertPosition(
+    investorId: string,
+    ticker: string,
+    quantity: number,
+    totalCostBasisCents: number,
+  ): Promise<void>
+  insertBuyActivity(investorId: string, fill: BuyFill): Promise<void>
   insertIdempotency(record: IdempotencyRecord): Promise<void>
 }
 
@@ -136,6 +157,14 @@ export type CreateBrokerageAccountCommand = {
 export type CashMovementCommand = {
   investorId: string
   amountCents: number
+  idempotencyKey: string
+}
+
+export type MarketOrderCommand = {
+  investorId: string
+  side: unknown
+  ticker: unknown
+  quantity: unknown
   idempotencyKey: string
 }
 
@@ -200,6 +229,48 @@ const insufficientCash: ApplicationResult = {
   },
 }
 
+const invalidMarketOrder: ApplicationResult = {
+  status: 400,
+  body: {
+    error: {
+      code: "invalid_request",
+      message:
+        'side must be "buy", Ticker must be valid, quantity must be a positive safe whole number, and Idempotency-Key is required.',
+    },
+  },
+}
+
+const marketClosed: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "market_closed",
+      message:
+        "Market Orders are accepted only during the Paper Trade session.",
+    },
+  },
+}
+
+const buyInsufficientCash: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "insufficient_cash",
+      message: "Buy Market Order exceeds Available Cash.",
+    },
+  },
+}
+
+const positionLimitExceeded: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "position_limit_exceeded",
+      message: "Buy Market Order would exceed the supported Position limit.",
+    },
+  },
+}
+
 const invalidTicker: ApplicationResult = {
   status: 400,
   body: {
@@ -236,6 +307,26 @@ const invalidDateRange: ApplicationResult = {
         "startDate and endDate must be valid YYYY-MM-DD dates in chronological order.",
     },
   },
+}
+
+const marketTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+})
+
+export function isMarketOpen(now: Date) {
+  const parts = Object.fromEntries(
+    marketTime.formatToParts(now).map(({ type, value }) => [type, value]),
+  )
+  const minutes = Number(parts.hour) * 60 + Number(parts.minute)
+  return (
+    ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(parts.weekday) &&
+    minutes >= 9 * 60 + 30 &&
+    minutes < 16 * 60
+  )
 }
 
 const usExchanges = new Set([
@@ -350,6 +441,140 @@ export async function quoteTradableSecurity(
     status: 200,
     body: { ticker, priceCents, quoteTimestamp: quoteTimestamp.toISOString() },
   }
+}
+
+export function isValidMarketOrder(command: MarketOrderCommand) {
+  return (
+    command.side === "buy" &&
+    typeof command.ticker === "string" &&
+    Boolean(normalizeTicker(command.ticker)) &&
+    Number.isSafeInteger(command.quantity) &&
+    (command.quantity as number) > 0 &&
+    Boolean(command.idempotencyKey.trim())
+  )
+}
+
+export async function submitMarketOrder(
+  store: BrokerageStore,
+  fetchFacts: (ticker: string) => Promise<FinancialDatasetsResult>,
+  fetchQuote: (ticker: string) => Promise<FinancialDatasetsResult>,
+  command: MarketOrderCommand,
+  options: { now?: Date; marketAlwaysOpen?: boolean } = {},
+): Promise<ApplicationResult> {
+  if (!isValidMarketOrder(command)) return invalidMarketOrder
+
+  const ticker = normalizeTicker(command.ticker as string) as string
+  const quantity = command.quantity as number
+  const fingerprint = JSON.stringify({ operation: "buy", ticker, quantity })
+  const lockAndFindIdempotencyResult = async (
+    transaction: BrokerageTransaction,
+  ) => {
+    await transaction.lockIdempotency(
+      command.investorId,
+      command.idempotencyKey,
+    )
+    const previous = await transaction.findIdempotency(
+      command.investorId,
+      command.idempotencyKey,
+    )
+    if (!previous) return undefined
+    return previous.fingerprint === fingerprint
+      ? { status: previous.status, body: previous.body }
+      : idempotencyConflict
+  }
+
+  const recordTerminalResult = (result: ApplicationResult) =>
+    store.transaction(async (transaction) => {
+      const replay = await lockAndFindIdempotencyResult(transaction)
+      if (replay) return replay
+      await transaction.insertIdempotency({
+        investorId: command.investorId,
+        key: command.idempotencyKey,
+        fingerprint,
+        ...result,
+      })
+      return result
+    })
+
+  const previous = await store.transaction(lockAndFindIdempotencyResult)
+  if (previous) return previous
+  if (!options.marketAlwaysOpen && !isMarketOpen(options.now ?? new Date())) {
+    return recordTerminalResult(marketClosed)
+  }
+
+  let security: ApplicationResult
+  try {
+    security = await lookUpTradableSecurity(fetchFacts, ticker)
+  } catch {
+    return marketDataUnavailable
+  }
+  if (security.status === 422) return recordTerminalResult(security)
+  if (security.status !== 200) return marketDataUnavailable
+
+  let quoted: ApplicationResult
+  try {
+    quoted = await quoteTradableSecurity(fetchQuote, ticker)
+  } catch {
+    return marketDataUnavailable
+  }
+  if (quoted.status !== 200 || !("priceCents" in quoted.body)) {
+    return marketDataUnavailable
+  }
+  const quote = quoted.body as SecurityQuote
+
+  return store.transaction(async (transaction) => {
+    const replay = await lockAndFindIdempotencyResult(transaction)
+    if (replay) return replay
+
+    const recordResult = async (result: ApplicationResult) => {
+      await transaction.insertIdempotency({
+        investorId: command.investorId,
+        key: command.idempotencyKey,
+        fingerprint,
+        ...result,
+      })
+      return result
+    }
+
+    const account = await transaction.lockAccount(command.investorId)
+    if (!account) return recordResult(accountNotFound)
+    if (quantity > Math.floor(account.availableCashCents / quote.priceCents)) {
+      return recordResult(buyInsufficientCash)
+    }
+
+    const current = await transaction.findPosition(command.investorId, ticker)
+    const totalCents = quote.priceCents * quantity
+    const newQuantity = (current?.quantity ?? 0) + quantity
+    const totalCostBasisCents = (current?.totalCostBasisCents ?? 0) + totalCents
+    if (
+      !Number.isSafeInteger(newQuantity) ||
+      !Number.isSafeInteger(totalCostBasisCents)
+    ) {
+      return recordResult(positionLimitExceeded)
+    }
+
+    const fill: BuyFill = {
+      type: "buy_fill",
+      ticker,
+      quantity,
+      priceCents: quote.priceCents,
+      totalCents,
+      quoteTimestamp: quote.quoteTimestamp,
+    }
+    await transaction.updateAvailableCash(
+      command.investorId,
+      account.availableCashCents - totalCents,
+    )
+    await transaction.upsertPosition(
+      command.investorId,
+      ticker,
+      newQuantity,
+      totalCostBasisCents,
+    )
+    await transaction.insertBuyActivity(command.investorId, fill)
+
+    return recordResult({ status: 200, body: fill })
+  })
 }
 
 export async function getDailyHistoricalPrices(

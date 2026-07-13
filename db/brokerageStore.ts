@@ -110,6 +110,47 @@ export const postgresBrokerageStore: BrokerageStore = {
             amountCents,
           })
         },
+        findPosition: async (investorId, ticker) => {
+          const [position] = await transaction
+            .select({
+              quantity: positions.quantity,
+              totalCostBasisCents: positions.totalCostBasisCents,
+            })
+            .from(positions)
+            .where(
+              and(
+                eq(positions.investorId, investorId),
+                eq(positions.ticker, ticker),
+              ),
+            )
+            .limit(1)
+          return position
+        },
+        upsertPosition: async (
+          investorId,
+          ticker,
+          quantity,
+          totalCostBasisCents,
+        ) => {
+          await transaction
+            .insert(positions)
+            .values({ investorId, ticker, quantity, totalCostBasisCents })
+            .onConflictDoUpdate({
+              target: [positions.investorId, positions.ticker],
+              set: { quantity, totalCostBasisCents },
+            })
+        },
+        insertBuyActivity: async (investorId, fill) => {
+          await transaction.insert(accountActivities).values({
+            investorId,
+            type: fill.type,
+            ticker: fill.ticker,
+            quantity: fill.quantity,
+            priceCents: fill.priceCents,
+            totalCents: fill.totalCents,
+            quoteTimestamp: new Date(fill.quoteTimestamp),
+          })
+        },
         insertIdempotency: async (record) => {
           await transaction.insert(idempotencyKeys).values({
             investorId: record.investorId,

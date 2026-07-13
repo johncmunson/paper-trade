@@ -16,9 +16,39 @@ import {
   lookUpTradableSecurity,
   quoteTradableSecurity,
   readBrokerageAccount,
+  submitMarketOrder as submitBuyMarketOrder,
   withdrawCash,
+  type BrokerageStore,
+  type MarketOrderCommand,
 } from "../lib/brokerageService"
 import type { FinancialDatasetsResult } from "../lib/financialDatasets"
+
+const fetchSupportedFacts = async (
+  ticker: string,
+): Promise<FinancialDatasetsResult> => ({
+  status: "ok",
+  data: {
+    ticker,
+    name: "Supported Security",
+    exchange: "NASDAQ",
+    isActive: true,
+  },
+})
+
+function submitMarketOrder(
+  store: BrokerageStore,
+  fetchQuote: (ticker: string) => Promise<FinancialDatasetsResult>,
+  command: MarketOrderCommand,
+  options: { now?: Date; marketAlwaysOpen?: boolean } = {},
+) {
+  return submitBuyMarketOrder(
+    store,
+    fetchSupportedFacts,
+    fetchQuote,
+    command,
+    options,
+  )
+}
 
 describe("Brokerage Account persistence", () => {
   test("market-data reads do not persist brokerage state", async () => {
@@ -259,6 +289,205 @@ describe("Brokerage Account persistence", () => {
         ],
       },
     })
+  })
+
+  test("buys repeatedly into one Position and replays the original Fill", async () => {
+    const investorId = "buy-lifecycle-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 100_000,
+      idempotencyKey: "open-buy-lifecycle",
+    })
+    const fetchFirstQuote = async (): Promise<FinancialDatasetsResult> => ({
+      status: "ok",
+      data: {
+        ticker: "AAPL",
+        price: 100.005,
+        quoteTimestamp: "2026-07-13T14:29:45.000Z",
+      },
+    })
+    const firstCommand = {
+      investorId,
+      side: "buy",
+      ticker: " aapl ",
+      quantity: 2,
+      idempotencyKey: "buy-1",
+    }
+    const first = await submitMarketOrder(
+      postgresBrokerageStore,
+      fetchFirstQuote,
+      firstCommand,
+      { marketAlwaysOpen: true },
+    )
+    expect(first).toMatchObject({
+      status: 200,
+      body: {
+        type: "buy_fill",
+        ticker: "AAPL",
+        priceCents: 10_001,
+        totalCents: 20_002,
+      },
+    })
+    expect(
+      await submitMarketOrder(
+        postgresBrokerageStore,
+        async () => {
+          throw new Error("idempotent replay must not fetch")
+        },
+        firstCommand,
+      ),
+    ).toEqual(first)
+
+    expect(
+      await submitMarketOrder(
+        postgresBrokerageStore,
+        async (): Promise<FinancialDatasetsResult> => ({
+          status: "ok",
+          data: {
+            ticker: "AAPL",
+            price: 200,
+            quoteTimestamp: "2026-07-13T14:30:45.000Z",
+          },
+        }),
+        {
+          ...firstCommand,
+          ticker: "AAPL",
+          quantity: 1,
+          idempotencyKey: "buy-2",
+        },
+        { marketAlwaysOpen: true },
+      ),
+    ).toMatchObject({ status: 200, body: { totalCents: 20_000 } })
+
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toEqual({
+      status: 200,
+      body: {
+        investorId,
+        availableCashCents: 59_998,
+        realizedGainLossCents: 0,
+        positions: [
+          { ticker: "AAPL", quantity: 3, averageCostBasisCents: 13_334 },
+        ],
+      },
+    })
+    expect(await db.select().from(positions)).toMatchObject([
+      { ticker: "AAPL", quantity: 3, totalCostBasisCents: 40_002 },
+    ])
+    expect(
+      await listAccountActivities(postgresBrokerageStore, investorId),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        activities: [
+          { type: "buy_fill", quantity: 1, totalCents: 20_000 },
+          { type: "buy_fill", quantity: 2, totalCents: 20_002 },
+          { type: "starting_cash", amountCents: 100_000 },
+        ],
+      },
+    })
+    expect(await db.select().from(idempotencyKeys)).toHaveLength(3)
+  })
+
+  test("rolls back every Buy write when its transaction fails", async () => {
+    const investorId = "buy-rollback-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 100_00,
+      idempotencyKey: "open-buy-rollback",
+    })
+    const failingStore: BrokerageStore = {
+      ...postgresBrokerageStore,
+      transaction: (work) =>
+        postgresBrokerageStore.transaction((transaction) =>
+          work({
+            ...transaction,
+            insertIdempotency: async () => {
+              throw new Error("forced transaction failure")
+            },
+          }),
+        ),
+    }
+
+    await expect(
+      submitMarketOrder(
+        failingStore,
+        async (): Promise<FinancialDatasetsResult> => ({
+          status: "ok",
+          data: {
+            ticker: "AAPL",
+            price: 50,
+            quoteTimestamp: "2026-07-13T14:29:45.000Z",
+          },
+        }),
+        {
+          investorId,
+          side: "buy",
+          ticker: "AAPL",
+          quantity: 1,
+          idempotencyKey: "buy-rollback",
+        },
+        { marketAlwaysOpen: true },
+      ),
+    ).rejects.toThrow("forced transaction failure")
+
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toMatchObject({
+      status: 200,
+      body: { availableCashCents: 100_00, positions: [] },
+    })
+    expect(await db.select().from(positions)).toHaveLength(0)
+    expect(await db.select().from(accountActivities)).toHaveLength(1)
+    expect(await db.select().from(idempotencyKeys)).toHaveLength(1)
+  })
+
+  test("serializes concurrent Buys against Available Cash", async () => {
+    const investorId = "concurrent-buy-investor"
+    await createBrokerageAccount(postgresBrokerageStore, {
+      investorId,
+      startingCashCents: 100_00,
+      idempotencyKey: "open-concurrent-buy",
+    })
+    const fetchQuote = async (): Promise<FinancialDatasetsResult> => ({
+      status: "ok",
+      data: {
+        ticker: "AAPL",
+        price: 70,
+        quoteTimestamp: "2026-07-13T14:29:45.000Z",
+      },
+    })
+    const order = (idempotencyKey: string) =>
+      submitMarketOrder(
+        postgresBrokerageStore,
+        fetchQuote,
+        {
+          investorId,
+          side: "buy",
+          ticker: "AAPL",
+          quantity: 1,
+          idempotencyKey,
+        },
+        { marketAlwaysOpen: true },
+      )
+
+    const results = await Promise.all([order("buy-1"), order("buy-2")])
+    expect(results.map((result) => result.status).sort()).toEqual([200, 422])
+    expect(
+      await readBrokerageAccount(postgresBrokerageStore, investorId),
+    ).toMatchObject({
+      status: 200,
+      body: {
+        availableCashCents: 30_00,
+        positions: [{ ticker: "AAPL", quantity: 1 }],
+      },
+    })
+    expect(
+      (await db.select().from(accountActivities)).filter(
+        (activity) => activity.type === "buy_fill",
+      ),
+    ).toHaveLength(1)
   })
 
   test("returns Fill Account Activity without persistence fields", async () => {
