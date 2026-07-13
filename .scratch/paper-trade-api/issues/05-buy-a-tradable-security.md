@@ -9,7 +9,7 @@
 - [ ] `POST /api/investors/{investorId}/account/market-orders` accepts `side: "buy"`, a normalized Ticker, and a positive safe whole-share `quantity`, and requires an idempotency key.
 - [ ] Buy Market Orders are accepted only Monday through Friday from 9:30 AM inclusive to 4:00 PM exclusive in `America/New_York`.
 - [ ] The simplified market session intentionally ignores exchange holidays and early closes and is tested independently of the machine timezone.
-- [ ] `PAPER_TRADE_MARKET_ALWAYS_OPEN=true` bypasses only the market-session check in local development, while production startup refuses this configuration.
+- [ ] `PAPER_TRADE_MARKET_ALWAYS_OPEN=true` bypasses only the market-session check in every environment.
 - [ ] A Buy fetches a fresh current quote before locking the Brokerage Account, rounds the quote to `priceCents`, and retains the quote timestamp.
 - [ ] A missing or unusable quote returns `503` and leaves cash, Positions, Account Activity, and idempotent financial state unchanged.
 - [ ] After taking the account lock, the service re-checks that total cost does not exceed Available Cash; insufficient cash returns the agreed `422` error with no Fill.
@@ -20,6 +20,6 @@
 - [ ] Idempotent replay returns the original Fill; conflicting key reuse returns `409` without another purchase.
 - [ ] Two concurrent Buy requests cannot both spend the same Available Cash, and the losing request receives a domain rejection rather than corrupting state.
 - [ ] Account reads show the resulting Position and cost basis without fetching a live quote; Account Activity includes the Buy Fill.
-- [ ] Unit tests cover market hours, the development override, quote failures, validation, insufficient cash, first and repeated purchases, idempotency, and atomic rejection.
+- [ ] Unit tests cover market hours, the always-open override, quote failures, validation, insufficient cash, first and repeated purchases, idempotency, and atomic rejection.
 - [ ] Live-database integration tests verify a complete Buy flow, Position uniqueness, transaction rollback, idempotency uniqueness, and concurrent-buy protection with Financial Datasets mocked according to the [Financial Datasets testing pattern](../financial-datasets-testing.md).
-- [ ] README documentation describes Buy Market Orders, session behavior, the development override, Fill fields, and common rejections.
+- [ ] README documentation describes Buy Market Orders, session behavior, the always-open override, Fill fields, and common rejections.

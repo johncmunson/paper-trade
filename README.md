@@ -20,7 +20,7 @@ DATABASE_URL=postgres://...          # pooled application connection
 DATABASE_URL_UNPOOLED=postgres://... # direct migration connection (optional)
 PAPER_TRADE_SERVICE_CREDENTIAL=replace-with-a-shared-secret
 FINANCIAL_DATASETS_API_KEY=replace-with-a-provider-key
-PAPER_TRADE_MARKET_ALWAYS_OPEN=false # development only
+PAPER_TRADE_MARKET_ALWAYS_OPEN=false
 ```
 
 After changing `db/schema/`, generate and apply a migration:
@@ -195,7 +195,7 @@ A successful Buy Market Order fetches a fresh quote, rounds it to cents, immedia
 
 Repeated Buy Market Orders retain one Position and add integer-cent total cost basis; account reads expose its rounded weighted-average cost basis without fetching a live quote. There are no fees, spread, slippage, settlement delay, partial fills, and Market Orders are not persisted.
 
-Market Orders are accepted Monday through Friday from 9:30 AM inclusive to 4:00 PM exclusive in `America/New_York`. Version one intentionally ignores exchange holidays and early closes. Local development may set `PAPER_TRADE_MARKET_ALWAYS_OPEN=true`; this bypasses only the session check, and production refuses to start with it enabled.
+Market Orders are accepted Monday through Friday from 9:30 AM inclusive to 4:00 PM exclusive in `America/New_York`. Version one intentionally ignores exchange holidays and early closes. Any environment may set `PAPER_TRADE_MARKET_ALWAYS_OPEN=true`; this bypasses only the session check.
 
 Common rejections are `400 invalid_request` for an invalid side, malformed Ticker, quantity, or missing idempotency key; `404 not_found` for an unknown Investor; `422 unsupported_ticker`; `422 market_closed`; `422 insufficient_cash`; `409 idempotency_conflict`; and `503 market_data_unavailable`. Quote failures change no financial or idempotency state. Insufficient-cash rejection creates no Fill. Replaying the same key and normalized payload returns the original Fill or terminal domain rejection without buying again.
 

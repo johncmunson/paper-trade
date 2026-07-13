@@ -223,7 +223,7 @@ describe("Market Orders", () => {
     expect(quoteRequests).toBe(0)
   })
 
-  test("rejects a closed session while the development override bypasses only that check", async () => {
+  test("rejects a closed session while the always-open override bypasses only that check", async () => {
     const { store } = memoryStore()
     const saturday = new Date("2026-07-11T14:30:00.000Z")
 

@@ -49,8 +49,8 @@ Persist only account state, Positions, Account Activity, and idempotency results
 29. As an Investor, I want rejected Market Orders excluded from Account Activity, so that activity represents changes that actually occurred.
 30. As the Wealth Manager server, I want a successful Market Order to return its Fill without creating a separate persistent Order resource, so that the contract matches synchronous execution.
 31. As an Investor, I want Market Orders accepted only during Paper Trade's defined market session, so that normal operation approximates regular US trading hours.
-32. As a developer, I want an explicit local-development override that treats the market as always open, so that I can test trading outside market hours.
-33. As an operator, I want production startup rejected when the always-open override is enabled, so that a development convenience cannot silently alter deployed trading rules.
+32. As an operator, I want an explicit override that treats the market as always open, so that I can enable trading outside market hours in any environment.
+33. As an operator, I want the always-open override honored in production, so that deployed trading hours can be configured explicitly.
 34. As the Wealth Manager server, I want every state-changing request protected by an idempotency key, so that network retries cannot duplicate account creation, cash movements, or Fills.
 35. As the Wealth Manager server, I want retrying the same idempotency key and payload to return the original result, so that retries are safe and predictable.
 36. As the Wealth Manager server, I want reuse of an idempotency key with a different payload rejected, so that conflicting commands cannot be mistaken for retries.
@@ -116,7 +116,7 @@ Persist only account state, Positions, Account Activity, and idempotency results
 - Fetch security facts, current snapshots, and daily historical OHLCV prices on demand. Normalize provider responses to Paper Trade's contract, including integer-cent prices. Do not persist or prefetch market data.
 - Restrict historical prices to the provider's daily end-of-day coverage and supported date range. Do not synthesize intraday data or extend missing history.
 - Treat the market as open Monday through Friday during the half-open interval from 9:30 AM through 4:00 PM America/New_York. Version one intentionally ignores exchange holidays and early closes.
-- Support a server-only `PAPER_TRADE_MARKET_ALWAYS_OPEN=true` development override. It bypasses only the market-session check; quote, account, cash, Position, and validation rules still apply. Refuse production startup when it is enabled.
+- Support a server-only `PAPER_TRADE_MARKET_ALWAYS_OPEN=true` override in every environment. It bypasses only the market-session check; quote, account, cash, Position, and validation rules still apply.
 - Use a server-only Financial Datasets API key, database connection string, and Paper Trade service credential. Do not use `NEXT_PUBLIC_` configuration for secrets.
 - Return errors as `{ "error": { "code": string, "message": string } }`. Use `400` for invalid input, `401` for an invalid service credential, `404` for missing resources, `409` for duplicate resources or idempotency conflicts, `422` for rejected domain actions, and `503` for unavailable market data. Do not return upstream payloads, stack traces, SQL, or secret values.
 - Use stable domain-specific codes including invalid request, unauthorized, not found, account already exists, idempotency conflict, market closed, insufficient cash, insufficient shares, unsupported Ticker, and market data unavailable.
@@ -132,7 +132,7 @@ Persist only account state, Positions, Account Activity, and idempotency results
 - Keep the database and Financial Datasets wrapper as replaceable dependencies at that seam. Do not add factories, class hierarchies, or one-implementation interfaces solely for tests; module-level dependencies or small function dependencies are sufficient.
 - Good tests assert externally visible results and durable state: returned account data, errors, Account Activity, balances, Positions, Realized Gain or Loss, and idempotent behavior. They must not assert Drizzle query chains, internal helper calls, SQL statement shape, or private function ordering.
 - Unit tests use a mocked database boundary and mocked Financial Datasets boundary. They cover orchestration and domain outcomes without a network or live database.
-- Unit tests cover account creation, duplicate creation, deposits, excessive withdrawals, Buy and Sell Fills, insufficient cash, insufficient shares, complete and partial Position sales, weighted-average basis rounding, immediate proceeds, market-closed rejection, the always-open development override, provider failure, Ticker normalization, malformed provider data, and error mapping.
+- Unit tests cover account creation, duplicate creation, deposits, excessive withdrawals, Buy and Sell Fills, insufficient cash, insufficient shares, complete and partial Position sales, weighted-average basis rounding, immediate proceeds, market-closed rejection, the always-open override, provider failure, Ticker normalization, malformed provider data, and error mapping.
 - Unit tests cover idempotency replay, conflicting payload reuse, and the rule that rejected operations do not create Account Activity.
 - Unit tests control the clock explicitly when testing market sessions; they must not depend on the machine's timezone or current date.
 - Integration tests use a live, dedicated Neon test database and a mocked Financial Datasets boundary. They verify actual Drizzle mappings, schema constraints, transactions, row locks, immutable Account Activity, and idempotency uniqueness.
