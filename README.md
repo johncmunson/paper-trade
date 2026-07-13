@@ -19,7 +19,7 @@ Configure `.env.local`:
 DATABASE_URL=postgres://...          # pooled application connection
 DATABASE_URL_UNPOOLED=postgres://... # direct migration connection (optional)
 PAPER_TRADE_SERVICE_CREDENTIAL=replace-with-a-shared-secret
-FINANCIAL_DATASETS_API_KEY=          # used by later market-data endpoints
+FINANCIAL_DATASETS_API_KEY=replace-with-a-provider-key
 ```
 
 After changing `db/schema/`, generate and apply a migration:
@@ -164,6 +164,46 @@ curl http://localhost:3000/api/investors/investor-123/account/activities \
 ```
 
 An unknown Investor returns `404 not_found`.
+
+## Tradable Security endpoints
+
+Financial Datasets must be configured with a server-side API key and a subscription that includes real-time company price snapshots. Market data is fetched on demand; Paper Trade does not persist, prefetch, or cache security facts or quotes.
+
+### Look up a Tradable Security
+
+`GET /api/securities/{ticker}` performs an exact Ticker lookup after trimming the input and normalizing it to uppercase. It does not provide fuzzy search or aliases.
+
+```bash
+curl 'http://localhost:3000/api/securities/%20aapl%20' \
+  -H 'Authorization: Bearer replace-with-a-shared-secret'
+```
+
+```json
+{
+  "ticker": "AAPL",
+  "name": "Apple Inc.",
+  "exchange": "NASDAQ"
+}
+```
+
+Active US-listed stocks and ETFs available from Financial Datasets are supported. Unknown or inactive Tickers return `422 unsupported_ticker`; malformed Tickers return `400 invalid_request`.
+
+### Get a current quote
+
+```bash
+curl http://localhost:3000/api/securities/aapl/quote \
+  -H 'Authorization: Bearer replace-with-a-shared-secret'
+```
+
+```json
+{
+  "ticker": "AAPL",
+  "priceCents": 21134,
+  "quoteTimestamp": "2026-07-13T14:30:00.000Z"
+}
+```
+
+The quote Ticker is canonical uppercase, `priceCents` is a positive safe integer rounded to the nearest cent, and `quoteTimestamp` is the provider source time normalized to ISO 8601. Provider authentication failures, timeouts, unavailable service, and malformed provider responses return `503 market_data_unavailable` without provider details. Both endpoints require the Paper Trade bearer credential.
 
 ## Tests
 

@@ -1,17 +1,53 @@
 import { sql } from "drizzle-orm"
 import { describe, expect, test } from "vitest"
 import { db } from "../db"
-import { accountActivities, positions } from "../db/schema"
+import {
+  accountActivities,
+  accounts,
+  idempotencyKeys,
+  positions,
+} from "../db/schema"
 import { postgresBrokerageStore } from "../db/brokerageStore"
 import {
   createBrokerageAccount,
   depositCash,
   listAccountActivities,
+  lookUpTradableSecurity,
+  quoteTradableSecurity,
   readBrokerageAccount,
   withdrawCash,
 } from "../lib/brokerageService"
+import type { FinancialDatasetsResult } from "../lib/financialDatasets"
 
 describe("Brokerage Account persistence", () => {
+  test("market-data reads do not persist brokerage state", async () => {
+    const fetchFacts = async (): Promise<FinancialDatasetsResult> => ({
+      status: "ok",
+      data: {
+        ticker: "AAPL",
+        name: "Apple Inc.",
+        exchange: "NASDAQ",
+        isActive: true,
+      },
+    })
+    const fetchQuote = async (): Promise<FinancialDatasetsResult> => ({
+      status: "ok",
+      data: {
+        ticker: "AAPL",
+        price: 100,
+        quoteTimestamp: "2026-01-15T14:30:00.000Z",
+      },
+    })
+
+    expect((await lookUpTradableSecurity(fetchFacts, "AAPL")).status).toBe(200)
+    expect((await quoteTradableSecurity(fetchQuote, "AAPL")).status).toBe(200)
+
+    expect(await db.select().from(accounts)).toHaveLength(0)
+    expect(await db.select().from(positions)).toHaveLength(0)
+    expect(await db.select().from(accountActivities)).toHaveLength(0)
+    expect(await db.select().from(idempotencyKeys)).toHaveLength(0)
+  })
+
   test("creates, replays, rejects conflicts, and reads durable state", async () => {
     const command = {
       investorId: "integration-investor",

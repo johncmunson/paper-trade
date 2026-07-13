@@ -1,3 +1,9 @@
+import type {
+  FinancialDatasetsFacts,
+  FinancialDatasetsQuote,
+  FinancialDatasetsResult,
+} from "./financialDatasets"
+
 export type Position = {
   ticker: string
   quantity: number
@@ -43,13 +49,30 @@ export type AccountActivityList = {
   activities: AccountActivity[]
 }
 
+export type TradableSecurity = {
+  ticker: string
+  name: string
+  exchange: string
+}
+
+export type SecurityQuote = {
+  ticker: string
+  priceCents: number
+  quoteTimestamp: string
+}
+
 export type ErrorBody = {
   error: { code: string; message: string }
 }
 
 export type ApplicationResult = {
   status: number
-  body: BrokerageAccount | AccountActivityList | ErrorBody
+  body:
+    | BrokerageAccount
+    | AccountActivityList
+    | TradableSecurity
+    | SecurityQuote
+    | ErrorBody
 }
 
 export type IdempotencyRecord = ApplicationResult & {
@@ -161,6 +184,136 @@ const insufficientCash: ApplicationResult = {
       message: "Cash Withdrawal exceeds Available Cash.",
     },
   },
+}
+
+const invalidTicker: ApplicationResult = {
+  status: 400,
+  body: {
+    error: { code: "invalid_request", message: "Ticker is malformed." },
+  },
+}
+
+const unsupportedTicker: ApplicationResult = {
+  status: 422,
+  body: {
+    error: {
+      code: "unsupported_ticker",
+      message: "Ticker is not a supported active US-listed stock or ETF.",
+    },
+  },
+}
+
+const marketDataUnavailable: ApplicationResult = {
+  status: 503,
+  body: {
+    error: {
+      code: "market_data_unavailable",
+      message: "Market data is temporarily unavailable.",
+    },
+  },
+}
+
+const usExchanges = new Set([
+  "AMEX",
+  "ARCA",
+  "BATS",
+  "CBOE",
+  "CBOE BZX",
+  "NASDAQ",
+  "NYSE",
+  "NYSE AMERICAN",
+  "NYSE ARCA",
+])
+
+function normalizeTicker(input: string) {
+  const ticker = input.trim().toUpperCase()
+  return /^[A-Z][A-Z0-9.-]{0,9}$/.test(ticker) ? ticker : undefined
+}
+
+export async function lookUpTradableSecurity(
+  fetchFacts: (ticker: string) => Promise<FinancialDatasetsResult>,
+  tickerInput: string,
+): Promise<ApplicationResult> {
+  const ticker = normalizeTicker(tickerInput)
+  if (!ticker) return invalidTicker
+
+  const result = await fetchFacts(ticker)
+  if (result.status === "not_found") return unsupportedTicker
+  if (result.status === "unavailable") return marketDataUnavailable
+  if (typeof result.data !== "object" || result.data === null) {
+    return marketDataUnavailable
+  }
+
+  const facts = result.data as Partial<FinancialDatasetsFacts>
+  if (
+    facts.ticker !== ticker ||
+    typeof facts.name !== "string" ||
+    !facts.name.trim() ||
+    typeof facts.exchange !== "string" ||
+    !facts.exchange.trim() ||
+    typeof facts.isActive !== "boolean"
+  ) {
+    return marketDataUnavailable
+  }
+  if (
+    !facts.isActive ||
+    !usExchanges.has(facts.exchange.trim().toUpperCase())
+  ) {
+    return unsupportedTicker
+  }
+
+  return {
+    status: 200,
+    body: {
+      ticker: facts.ticker,
+      name: facts.name.trim(),
+      exchange: facts.exchange.trim(),
+    },
+  }
+}
+
+export async function quoteTradableSecurity(
+  fetchQuote: (ticker: string) => Promise<FinancialDatasetsResult>,
+  tickerInput: string,
+): Promise<ApplicationResult> {
+  const ticker = normalizeTicker(tickerInput)
+  if (!ticker) return invalidTicker
+
+  const result = await fetchQuote(ticker)
+  if (result.status === "not_found") return unsupportedTicker
+  if (result.status === "unavailable") return marketDataUnavailable
+  if (typeof result.data !== "object" || result.data === null) {
+    return marketDataUnavailable
+  }
+
+  const quote = result.data as Partial<FinancialDatasetsQuote>
+  if (
+    quote.ticker !== ticker ||
+    typeof quote.price !== "number" ||
+    !Number.isFinite(quote.price) ||
+    quote.price <= 0 ||
+    typeof quote.quoteTimestamp !== "string"
+  ) {
+    return marketDataUnavailable
+  }
+
+  const [coefficient, exponent = "0"] = quote.price.toString().split("e")
+  const priceCents = Math.round(
+    Number(`${coefficient}e${Number(exponent) + 2}`),
+  )
+  const quoteTimestamp = new Date(quote.quoteTimestamp)
+  if (
+    !Number.isSafeInteger(priceCents) ||
+    priceCents <= 0 ||
+    Number.isNaN(quoteTimestamp.valueOf())
+  ) {
+    return marketDataUnavailable
+  }
+
+  return {
+    status: 200,
+    body: { ticker, priceCents, quoteTimestamp: quoteTimestamp.toISOString() },
+  }
 }
 
 export async function createBrokerageAccount(

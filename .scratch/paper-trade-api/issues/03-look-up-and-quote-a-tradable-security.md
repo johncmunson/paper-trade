@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Open and inspect a Brokerage Account
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `GET /api/securities/{ticker}` performs exact, case-insensitive lookup after trimming and normalizing the Ticker to uppercase.
 - [ ] A successful lookup returns a stable Paper Trade representation of the supported US-listed stock or ETF using only fields available from Financial Datasets.
