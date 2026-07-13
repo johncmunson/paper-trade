@@ -1,5 +1,6 @@
 import type {
   FinancialDatasetsFacts,
+  FinancialDatasetsHistoricalPrices,
   FinancialDatasetsQuote,
   FinancialDatasetsResult,
 } from "./financialDatasets"
@@ -61,6 +62,18 @@ export type SecurityQuote = {
   quoteTimestamp: string
 }
 
+export type DailyHistoricalPrices = {
+  ticker: string
+  prices: Array<{
+    date: string
+    openCents: number
+    highCents: number
+    lowCents: number
+    closeCents: number
+    volume: number | null
+  }>
+}
+
 export type ErrorBody = {
   error: { code: string; message: string }
 }
@@ -72,6 +85,7 @@ export type ApplicationResult = {
     | AccountActivityList
     | TradableSecurity
     | SecurityQuote
+    | DailyHistoricalPrices
     | ErrorBody
 }
 
@@ -213,6 +227,17 @@ const marketDataUnavailable: ApplicationResult = {
   },
 }
 
+const invalidDateRange: ApplicationResult = {
+  status: 400,
+  body: {
+    error: {
+      code: "invalid_request",
+      message:
+        "startDate and endDate must be valid YYYY-MM-DD dates in chronological order.",
+    },
+  },
+}
+
 const usExchanges = new Set([
   "AMEX",
   "ARCA",
@@ -228,6 +253,20 @@ const usExchanges = new Set([
 function normalizeTicker(input: string) {
   const ticker = input.trim().toUpperCase()
   return /^[A-Z][A-Z0-9.-]{0,9}$/.test(ticker) ? ticker : undefined
+}
+
+function isDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+
+  const date = new Date(`${value}T00:00:00Z`)
+  return (
+    !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
+  )
+}
+
+function priceToCents(price: number) {
+  const [coefficient, exponent = "0"] = price.toString().split("e")
+  return Math.round(Number(`${coefficient}e${Number(exponent) + 2}`))
 }
 
 export async function lookUpTradableSecurity(
@@ -297,10 +336,7 @@ export async function quoteTradableSecurity(
     return marketDataUnavailable
   }
 
-  const [coefficient, exponent = "0"] = quote.price.toString().split("e")
-  const priceCents = Math.round(
-    Number(`${coefficient}e${Number(exponent) + 2}`),
-  )
+  const priceCents = priceToCents(quote.price)
   const quoteTimestamp = new Date(quote.quoteTimestamp)
   if (
     !Number.isSafeInteger(priceCents) ||
@@ -314,6 +350,81 @@ export async function quoteTradableSecurity(
     status: 200,
     body: { ticker, priceCents, quoteTimestamp: quoteTimestamp.toISOString() },
   }
+}
+
+export async function getDailyHistoricalPrices(
+  fetchPrices: (
+    ticker: string,
+    startDate: string,
+    endDate: string,
+  ) => Promise<FinancialDatasetsResult>,
+  tickerInput: string,
+  startDate: string,
+  endDate: string,
+): Promise<ApplicationResult> {
+  const ticker = normalizeTicker(tickerInput)
+  if (!ticker) return invalidTicker
+  if (!isDate(startDate) || !isDate(endDate) || startDate > endDate) {
+    return invalidDateRange
+  }
+
+  const result = await fetchPrices(ticker, startDate, endDate)
+  if (result.status === "not_found") return unsupportedTicker
+  if (result.status === "unavailable") return marketDataUnavailable
+  if (typeof result.data !== "object" || result.data === null) {
+    return marketDataUnavailable
+  }
+
+  const history = result.data as Partial<FinancialDatasetsHistoricalPrices>
+  if (history.ticker !== ticker || !Array.isArray(history.prices)) {
+    return marketDataUnavailable
+  }
+
+  const prices: DailyHistoricalPrices["prices"] = []
+  for (const value of history.prices as unknown[]) {
+    if (typeof value !== "object" || value === null) {
+      return marketDataUnavailable
+    }
+    const price = value as Partial<
+      FinancialDatasetsHistoricalPrices["prices"][number]
+    >
+    if (
+      typeof price.date !== "string" ||
+      !isDate(price.date) ||
+      price.date < startDate ||
+      price.date > endDate ||
+      typeof price.open !== "number" ||
+      typeof price.high !== "number" ||
+      typeof price.low !== "number" ||
+      typeof price.close !== "number" ||
+      ![price.open, price.high, price.low, price.close].every(
+        (amount) => Number.isFinite(amount) && amount > 0,
+      ) ||
+      price.high < Math.max(price.open, price.close, price.low) ||
+      price.low > Math.min(price.open, price.close, price.high) ||
+      (price.volume !== null &&
+        (!Number.isSafeInteger(price.volume) || (price.volume ?? -1) < 0))
+    ) {
+      return marketDataUnavailable
+    }
+
+    const cents = [price.open, price.high, price.low, price.close].map(
+      priceToCents,
+    )
+    if (!cents.every((amount) => Number.isSafeInteger(amount) && amount > 0)) {
+      return marketDataUnavailable
+    }
+    prices.push({
+      date: price.date,
+      openCents: cents[0],
+      highCents: cents[1],
+      lowCents: cents[2],
+      closeCents: cents[3],
+      volume: price.volume ?? null,
+    })
+  }
+
+  return { status: 200, body: { ticker, prices } }
 }
 
 export async function createBrokerageAccount(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
 import {
+  getDailyHistoricalPrices,
   lookUpTradableSecurity,
   quoteTradableSecurity,
 } from "../lib/brokerageService"
@@ -205,6 +206,200 @@ describe("market-data application service", () => {
         error: { code: "invalid_request", message: "Ticker is malformed." },
       },
     })
+  })
+
+  test("returns provider daily history with normalized prices and nullable volume", async () => {
+    let request: string[] = []
+    const fetchPrices = async (
+      ticker: string,
+      startDate: string,
+      endDate: string,
+    ): Promise<FinancialDatasetsResult> => {
+      request = [ticker, startDate, endDate]
+      return {
+        status: "ok",
+        data: {
+          ticker: "AAPL",
+          prices: [
+            {
+              date: "2026-01-02",
+              open: 243.855,
+              high: 244.15,
+              low: 241.91,
+              close: 243.36,
+              volume: 40_230_800,
+            },
+            {
+              date: "2026-01-05",
+              open: 243.36,
+              high: 245.55,
+              low: 242.8,
+              close: 245,
+              volume: null,
+            },
+          ],
+        },
+      }
+    }
+
+    expect(
+      await getDailyHistoricalPrices(
+        fetchPrices,
+        " aapl ",
+        "2026-01-02",
+        "2026-01-05",
+      ),
+    ).toEqual({
+      status: 200,
+      body: {
+        ticker: "AAPL",
+        prices: [
+          {
+            date: "2026-01-02",
+            openCents: 24_386,
+            highCents: 24_415,
+            lowCents: 24_191,
+            closeCents: 24_336,
+            volume: 40_230_800,
+          },
+          {
+            date: "2026-01-05",
+            openCents: 24_336,
+            highCents: 24_555,
+            lowCents: 24_280,
+            closeCents: 24_500,
+            volume: null,
+          },
+        ],
+      },
+    })
+    expect(request).toEqual(["AAPL", "2026-01-02", "2026-01-05"])
+  })
+
+  test("rejects malformed or reversed historical date ranges before fetching", async () => {
+    const fetchPrices = async (): Promise<FinancialDatasetsResult> => {
+      throw new Error("should not be called")
+    }
+    const expected = {
+      status: 400,
+      body: {
+        error: {
+          code: "invalid_request",
+          message:
+            "startDate and endDate must be valid YYYY-MM-DD dates in chronological order.",
+        },
+      },
+    }
+
+    expect(
+      await getDailyHistoricalPrices(
+        fetchPrices,
+        "AAPL",
+        "2026-02-30",
+        "2026-03-01",
+      ),
+    ).toEqual(expected)
+    expect(
+      await getDailyHistoricalPrices(
+        fetchPrices,
+        "AAPL",
+        "2026-13-01",
+        "2026-03-01",
+      ),
+    ).toEqual(expected)
+    expect(
+      await getDailyHistoricalPrices(
+        fetchPrices,
+        "AAPL",
+        "2026-03-02",
+        "2026-03-01",
+      ),
+    ).toEqual(expected)
+  })
+
+  test("preserves empty daily history", async () => {
+    expect(
+      await getDailyHistoricalPrices(
+        async () => ({
+          status: "ok",
+          data: { ticker: "AAPL", prices: [] },
+        }),
+        "AAPL",
+        "2026-01-01",
+        "2026-01-02",
+      ),
+    ).toEqual({ status: 200, body: { ticker: "AAPL", prices: [] } })
+  })
+
+  test("maps unavailable, unsupported, and malformed historical prices to stable errors", async () => {
+    const unavailable = {
+      status: 503,
+      body: {
+        error: {
+          code: "market_data_unavailable",
+          message: "Market data is temporarily unavailable.",
+        },
+      },
+    }
+
+    expect(
+      await getDailyHistoricalPrices(
+        async () => ({ status: "unavailable" }),
+        "AAPL",
+        "2026-01-01",
+        "2026-01-02",
+      ),
+    ).toEqual(unavailable)
+    expect(
+      await getDailyHistoricalPrices(
+        async () => ({ status: "not_found" }),
+        "NOPE",
+        "2026-01-01",
+        "2026-01-02",
+      ),
+    ).toMatchObject({
+      status: 422,
+      body: { error: { code: "unsupported_ticker" } },
+    })
+
+    for (const data of [
+      { ticker: "WRONG", prices: [] },
+      {
+        ticker: "AAPL",
+        prices: [
+          {
+            date: "2026-01-01T16:00:00Z",
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+          },
+        ],
+      },
+      {
+        ticker: "AAPL",
+        prices: [
+          {
+            date: "2026-01-01",
+            open: 0,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1.5,
+          },
+        ],
+      },
+    ]) {
+      expect(
+        await getDailyHistoricalPrices(
+          async () => ({ status: "ok", data }),
+          "AAPL",
+          "2026-01-01",
+          "2026-01-02",
+        ),
+      ).toEqual(unavailable)
+    }
   })
 
   test("looks up a supported ETF", async () => {

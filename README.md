@@ -167,7 +167,7 @@ An unknown Investor returns `404 not_found`.
 
 ## Tradable Security endpoints
 
-Financial Datasets must be configured with a server-side API key and a subscription that includes real-time company price snapshots. Market data is fetched on demand; Paper Trade does not persist, prefetch, or cache security facts or quotes.
+Financial Datasets must be configured with a server-side API key and a subscription that includes real-time company price snapshots. Market data is fetched on demand; Paper Trade does not persist, prefetch, or cache security facts, quotes, or price history.
 
 ### Look up a Tradable Security
 
@@ -203,7 +203,36 @@ curl http://localhost:3000/api/securities/aapl/quote \
 }
 ```
 
-The quote Ticker is canonical uppercase, `priceCents` is a positive safe integer rounded to the nearest cent, and `quoteTimestamp` is the provider source time normalized to ISO 8601. Provider authentication failures, timeouts, unavailable service, and malformed provider responses return `503 market_data_unavailable` without provider details. Both endpoints require the Paper Trade bearer credential.
+The quote Ticker is canonical uppercase, `priceCents` is a positive safe integer rounded to the nearest cent, and `quoteTimestamp` is the provider source time normalized to ISO 8601. Provider authentication failures, timeouts, unavailable service, and malformed provider responses return `503 market_data_unavailable` without provider details.
+
+### Get daily historical prices
+
+`GET /api/securities/{ticker}/prices` requires inclusive `startDate` and `endDate` query parameters in `YYYY-MM-DD` format.
+
+```bash
+curl 'http://localhost:3000/api/securities/aapl/prices?startDate=2026-01-02&endDate=2026-01-05' \
+  -H 'Authorization: Bearer replace-with-a-shared-secret'
+```
+
+```json
+{
+  "ticker": "AAPL",
+  "prices": [
+    {
+      "date": "2026-01-02",
+      "openCents": 24385,
+      "highCents": 24415,
+      "lowCents": 24191,
+      "closeCents": 24336,
+      "volume": 40230800
+    }
+  ]
+}
+```
+
+Prices are Financial Datasets daily end-of-day OHLCV values rounded to integer cents. `volume` is `null` when unavailable. Results contain only dates returned by Financial Datasets: missing dates are not filled, and intraday, adjusted, or out-of-range history is not added. Provider coverage is limited to its supported Tickers and available history (documented as 15,000+ Tickers and roughly three or more years); an empty `prices` array is valid.
+
+Missing, malformed, or reversed dates return `400 invalid_request`. Unsupported Tickers return `422 unsupported_ticker`; unavailable or malformed provider responses return `503 market_data_unavailable`. All Tradable Security endpoints require the Paper Trade bearer credential.
 
 ## Tests
 

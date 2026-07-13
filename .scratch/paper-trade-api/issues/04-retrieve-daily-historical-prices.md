@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Look up and quote a Tradable Security
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `GET /api/securities/{ticker}/prices` requires valid start and end dates and rejects reversed or malformed ranges with `400`.
 - [ ] Ticker input follows the established exact lookup and uppercase normalization behavior.

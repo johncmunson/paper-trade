@@ -11,6 +11,7 @@ import { postgresBrokerageStore } from "../db/brokerageStore"
 import {
   createBrokerageAccount,
   depositCash,
+  getDailyHistoricalPrices,
   listAccountActivities,
   lookUpTradableSecurity,
   quoteTradableSecurity,
@@ -38,9 +39,23 @@ describe("Brokerage Account persistence", () => {
         quoteTimestamp: "2026-01-15T14:30:00.000Z",
       },
     })
+    const fetchPrices = async (): Promise<FinancialDatasetsResult> => ({
+      status: "ok",
+      data: { ticker: "AAPL", prices: [] },
+    })
 
     expect((await lookUpTradableSecurity(fetchFacts, "AAPL")).status).toBe(200)
     expect((await quoteTradableSecurity(fetchQuote, "AAPL")).status).toBe(200)
+    expect(
+      (
+        await getDailyHistoricalPrices(
+          fetchPrices,
+          "AAPL",
+          "2026-01-01",
+          "2026-01-02",
+        )
+      ).status,
+    ).toBe(200)
 
     expect(await db.select().from(accounts)).toHaveLength(0)
     expect(await db.select().from(positions)).toHaveLength(0)
